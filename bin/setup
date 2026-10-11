@@ -1,0 +1,18 @@
+#!/bin/bash
+# Install the chttr command from this checkout (editable, so `omarchy plugin update`
+# brings new code), then download models and set up the service, keybindings and
+# Meet extension. Safe to run again; pass --help to see what `chttr setup` skips.
+set -euo pipefail
+dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+uv="$(command -v uv || true)"
+if [[ -z $uv ]] && command -v mise >/dev/null; then uv="$(mise which uv 2>/dev/null || true)"; fi
+if [[ -z $uv ]]; then
+  echo "chttr is installed with uv; installing it first (omarchy pkg add uv)."
+  omarchy pkg add uv
+  uv="$(command -v uv)"
+fi
+
+echo "Installing the chttr command (Python 3.14 and its packages)…"
+"$uv" tool install --python 3.14 --editable "$dir" --reinstall --quiet
+exec "$HOME/.local/bin/chttr" setup "$@"

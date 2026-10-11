@@ -1,0 +1,173 @@
+"""Local speech-to-text: NVIDIA Parakeet (onnx-asr) or whisper.cpp (pywhispercpp)."""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import threading
+import wave
+from pathlib import Path
+
+import numpy as np
+
+from .config import MODEL_SEARCH_DIRS, PARAKEET_SEARCH_DIRS, Config
+
+log = logging.getLogger("chttr.asr")
+
+SAMPLE_RATE = 16000
+
+# Whisper emits these on silence / noise; never type them.
+_NON_SPEECH = re.compile(r"^[\s\[\(\*].*[\]\)\*]\s*$")
+_HALLUCINATIONS = {
+    "thank you.", "thanks for watching.", "thank you for watching.", "you", "you.",
+    "bye.", "thanks.", "subtitles by the amara.org community",
+}
+_PARAKEET_FILES = ("encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt")
+
+
+def resolve_model(name: str) -> str:
+    """Return a path to a ggml model if one is already on disk, else the bare name
+    (pywhispercpp will download it to its own models dir)."""
+    p = Path(name).expanduser()
+    if p.suffix == ".bin" and p.exists():
+        return str(p)
+    for d in MODEL_SEARCH_DIRS:
+        candidate = d / f"ggml-{name}.bin"
+        if candidate.exists():
+            return str(candidate)
+    return name
+
+
+def resolve_parakeet(configured: str) -> Path:
+    dirs = [Path(configured).expanduser()] if configured else PARAKEET_SEARCH_DIRS
+    for d in dirs:
+        if all((d / f).exists() for f in _PARAKEET_FILES):
+            return d
+    raise FileNotFoundError(
+        "Parakeet model not found in " + ", ".join(str(d) for d in dirs)
+        + " (download it with voxtype, or set [engine] name = \"whisper\")")
+
+
+def load_wav(path: Path) -> np.ndarray:
+    with wave.open(str(path), "rb") as wf:
+        assert wf.getsampwidth() == 2, "expected 16-bit PCM"
+        frames = wf.readframes(wf.getnframes())
+        channels = wf.getnchannels()
+        rate = wf.getframerate()
+    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    if channels > 1:
+        audio = audio.reshape(-1, channels).mean(axis=1)
+    if rate != SAMPLE_RATE:
+        n = int(len(audio) * SAMPLE_RATE / rate)
+        audio = np.interp(np.linspace(0, len(audio), n, endpoint=False), np.arange(len(audio)), audio).astype(np.float32)
+    return audio
+
+
+def trim_silence(audio: np.ndarray, threshold_db: float, pad: float = 0.3) -> np.ndarray:
+    """Cut leading and trailing silence (20 ms frames below threshold_db RMS), keeping
+    `pad` seconds either side. Shorter input is faster and gives whisper less room to
+    hallucinate. Returns an empty array if no frame reaches the threshold."""
+    frame = SAMPLE_RATE // 50
+    n = len(audio) // frame
+    if n == 0:
+        return audio
+    frames = audio[: n * frame].reshape(n, frame)
+    rms_db = 10 * np.log10(np.maximum(np.mean(frames * frames, axis=1), 1e-12))
+    loud = np.flatnonzero(rms_db > threshold_db)
+    if len(loud) == 0:
+        return audio[:0]
+    p = int(pad * 50)
+    start = max(0, loud[0] - p) * frame
+    end = min(n, loud[-1] + 1 + p) * frame
+    return audio[start:end]
+
+
+def _clean(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or _NON_SPEECH.match(text) or text.lower() in _HALLUCINATIONS:
+        return ""
+    return text
+
+
+def _threads(n: int) -> int:
+    return n or max(1, (os.cpu_count() or 4) // 2)
+
+
+class WhisperTranscriber:
+    name = "whisper"
+
+    def __init__(self, cfg: Config) -> None:
+        from pywhispercpp.model import Model
+
+        w = cfg.whisper
+        threads = _threads(cfg.engine.threads or w.threads)
+        model = resolve_model(w.model)
+        log.info("loading whisper model %s (%d threads)", model, threads)
+        self.model = Model(
+            model,
+            redirect_whispercpp_logs_to=None,
+            n_threads=threads,
+            print_progress=False,
+            print_realtime=False,
+            language=w.language,
+            no_context=True,
+            suppress_blank=True,
+            suppress_nst=True,
+        )
+        self.key = ("whisper", w.model, w.language, threads)
+
+    def recognize(self, audio: np.ndarray, vocabulary_prompt: str | None) -> str:
+        # initial_prompt biases decoding toward these spellings (names, jargon).
+        segments = self.model.transcribe(audio, initial_prompt=vocabulary_prompt or "")
+        return " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
+
+
+class ParakeetTranscriber:
+    name = "parakeet"
+
+    def __init__(self, cfg: Config) -> None:
+        import onnx_asr
+        import onnxruntime as ort
+
+        path = resolve_parakeet(cfg.engine.parakeet_dir)
+        threads = _threads(cfg.engine.threads)
+        log.info("loading parakeet from %s (%d threads)", path, threads)
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = threads
+        self.model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", str(path), quantization="int8", sess_options=so)
+        self.key = ("parakeet", str(path), threads)
+
+    def recognize(self, audio: np.ndarray, vocabulary_prompt: str | None) -> str:
+        # Parakeet takes no prompt; the dictionary's replacements cover names instead.
+        return str(self.model.recognize(audio))
+
+
+def engine_key(cfg: Config) -> tuple:
+    if cfg.engine.name == "whisper":
+        return ("whisper", cfg.whisper.model, cfg.whisper.language, _threads(cfg.engine.threads or cfg.whisper.threads))
+    return ("parakeet", str(resolve_parakeet(cfg.engine.parakeet_dir)), _threads(cfg.engine.threads))
+
+
+class Transcriber:
+    """The configured engine behind a lock, so live captions and the final pass
+    never run the model at the same time."""
+
+    def __init__(self, cfg: Config) -> None:
+        self.lock = threading.Lock()
+        self.engine = ParakeetTranscriber(cfg) if cfg.engine.name == "parakeet" else WhisperTranscriber(cfg)
+        self.threshold_db = cfg.audio.speech_threshold_db
+        log.info("%s ready", self.engine.name)
+
+    @property
+    def key(self) -> tuple:
+        return self.engine.key
+
+    def transcribe(self, source: Path | np.ndarray, vocabulary_prompt: str | None = None, trim: bool = True) -> str:
+        audio = source if isinstance(source, np.ndarray) else load_wav(source)
+        if trim:
+            audio = trim_silence(audio, self.threshold_db)
+        if len(audio) < SAMPLE_RATE * 0.3:  # < 0.3 s
+            return ""
+        with self.lock:
+            return _clean(self.engine.recognize(audio, vocabulary_prompt))

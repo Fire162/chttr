@@ -1,0 +1,9 @@
+#!/bin/bash
+# Feed for the bar widget: one JSON line per state change. Until setup has
+# installed the chttr command, report "setup" and wait for it.
+exe="$HOME/.local/bin/chttr"
+if [[ ! -x $exe ]]; then
+  echo '{"alt":"setup","class":"setup"}'
+  until [[ -x $exe ]]; do sleep 3; done
+fi
+exec "$exe" status --follow --json

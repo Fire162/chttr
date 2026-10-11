@@ -1,0 +1,180 @@
+"""`chttr setup`: everything after `uv tool install`, safe to run again.
+
+- config file, speech models (Parakeet if voxtype hasn't downloaded it, VAD and
+  speaker embeddings for meetings)
+- a systemd user service for the daemon (replacing a Hyprland autostart line)
+- Hyprland keybindings, if there are no chttr bindings yet
+- the Google Meet extension and its native messaging host
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+
+from . import config as C
+
+PARAKEET_URL = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/"
+PARAKEET_FILES = ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt", "config.json"]
+UNIT = Path.home() / ".config/systemd/user/chttr.service"
+HYPR = Path.home() / ".config/hypr"
+
+UNIT_TEXT = """\
+[Unit]
+Description=chttr dictation and meeting daemon
+PartOf=graphical-session.target
+After=graphical-session.target pipewire.service
+
+[Service]
+ExecStart={exe} daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
+"""
+
+BINDINGS_LUA = """
+-- chttr (https://github.com/robjobbed/chttr): hold Insert to dictate, release to type.
+-- Alt+Insert: say what to do with the selected text. Super+Insert: hands-free.
+-- Super+Shift+Insert: dictation history. Super+Alt+Insert: record a meeting.
+o.bind("Insert", "chttr: push-to-talk", "{exe} start")
+o.bind("Insert", "chttr: push-to-talk (release)", "{exe} release", {{ release = true }})
+o.bind("ALT + Insert", "chttr: command mode on selection", "{exe} command")
+o.bind("ALT + Insert", "chttr: command mode (release)", "{exe} release", {{ release = true }})
+o.bind("SUPER + Insert", "chttr: hands-free dictation", "{exe} toggle")
+o.bind("SUPER + SHIFT + Insert", "chttr: dictation history", "{exe} history")
+o.bind("SUPER + ALT + Insert", "chttr: record meeting (toggle)", "{exe} meeting toggle")
+"""
+
+BINDINGS_CONF = """
+# chttr (https://github.com/robjobbed/chttr)
+bindd = , Insert, chttr: push-to-talk, exec, {exe} start
+bindrd = , Insert, chttr: push-to-talk (release), exec, {exe} release
+bindd = ALT, Insert, chttr: command mode, exec, {exe} command
+bindrd = ALT, Insert, chttr: command mode (release), exec, {exe} release
+bindd = SUPER, Insert, chttr: hands-free dictation, exec, {exe} toggle
+bindd = SUPER SHIFT, Insert, chttr: dictation history, exec, {exe} history
+bindd = SUPER ALT, Insert, chttr: record meeting, exec, {exe} meeting toggle
+"""
+
+
+def _say(msg: str) -> None:
+    print(f"  {msg}", flush=True)
+
+
+def _download(url: str, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".part")
+    with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as fh:
+        total = int(r.headers.get("Content-Length") or 0)
+        done, last = 0, 0.0
+        while chunk := r.read(1 << 20):
+            fh.write(chunk)
+            done += len(chunk)
+            if total and time.monotonic() - last > 1:
+                last = time.monotonic()
+                print(f"\r    {path.name}: {done * 100 // total}% of {total >> 20} MB", end="", flush=True)
+    if total:
+        print(f"\r    {path.name}: done ({total >> 20} MB)          ", flush=True)
+    tmp.rename(path)
+
+
+def models() -> None:
+    from . import diarize
+    from .transcriber import resolve_parakeet
+
+    try:
+        _say(f"speech model: Parakeet in {resolve_parakeet('')}")
+    except FileNotFoundError:
+        target = C.PARAKEET_SEARCH_DIRS[-1]
+        _say(f"speech model: downloading Parakeet TDT 0.6B v3 (int8, ~670 MB) to {target}")
+        for name in PARAKEET_FILES:
+            if not (target / name).exists():
+                _download(PARAKEET_URL + name, target / name)
+    _say("meeting models: voice activity + speaker embeddings (~29 MB)")
+    diarize.ensure_models()
+
+
+def _comment_out_autostart(exe: str) -> None:
+    for name in ("autostart.lua", "autostart.conf"):
+        path = HYPR / name
+        if not path.exists():
+            continue
+        lines = path.read_text().splitlines()
+        changed = False
+        for i, line in enumerate(lines):
+            s = line.strip()
+            if "chttr daemon" in s and not s.startswith(("--", "#")):
+                lines[i] = ("-- " if name.endswith(".lua") else "# ") + line + "   (now a systemd service: chttr.service)"
+                changed = True
+        if changed:
+            shutil.copy2(path, path.with_name(path.name + ".bak-chttr"))
+            path.write_text("\n".join(lines) + "\n")
+            _say(f"commented out the old chttr daemon line in {path}")
+
+
+def service(exe: str) -> None:
+    UNIT.parent.mkdir(parents=True, exist_ok=True)
+    UNIT.write_text(UNIT_TEXT.format(exe=exe))
+    _comment_out_autostart(exe)
+    if C.SOCKET_PATH.exists():
+        subprocess.run([exe, "quit"], capture_output=True, check=False)     # a daemon started some other way
+        time.sleep(1)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    subprocess.run(["systemctl", "--user", "enable", "chttr.service"], capture_output=True, check=False)
+    subprocess.run(["systemctl", "--user", "restart", "chttr.service"], check=False)
+    _say("daemon: systemd user service chttr.service (logs: journalctl --user -u chttr)")
+
+
+def keybindings(exe: str) -> None:
+    lua, conf = HYPR / "bindings.lua", HYPR / "bindings.conf"
+    target, block = (lua, BINDINGS_LUA) if lua.exists() else (conf, BINDINGS_CONF) if conf.exists() else (None, "")
+    if target is None:
+        _say("keybindings: no ~/.config/hypr/bindings.lua or bindings.conf; see the README to add them")
+        return
+    text = target.read_text()
+    if "chttr" in text:
+        _say(f"keybindings: {target} already has chttr bindings; left alone")
+        return
+    shutil.copy2(target, target.with_name(target.name + ".bak-chttr"))
+    target.write_text(text.rstrip("\n") + "\n" + block.format(exe=exe))
+    subprocess.run(["hyprctl", "reload"], capture_output=True, check=False)
+    _say(f"keybindings: added to {target} (Insert, Alt/Super+Insert, Super+Alt+Insert)")
+
+
+def meet() -> None:
+    from .native_host import install
+
+    for line in install() or ["no Chromium-family browser found; skipping the Meet extension"]:
+        _say(f"meet: {line}")
+
+
+def run(do_models: bool = True, do_service: bool = True, do_bindings: bool = True, do_meet: bool = True) -> int:
+    exe = shutil.which("chttr") or str(Path.home() / ".local/bin/chttr")
+    print("chttr setup")
+    if C.write_default_config():
+        _say(f"config: created {C.CONFIG_FILE}")
+    else:
+        _say(f"config: {C.CONFIG_FILE}")
+    if do_models:
+        models()
+    if do_bindings:
+        keybindings(exe)
+    if do_meet:
+        meet()
+    if do_service:
+        service(exe)
+    print("""
+Done. Hold Insert and talk.
+
+Optional, for the best results:
+  Claude cleanup + meeting notes:  put an Anthropic API key in ~/.config/chttr/anthropic-api-key (chmod 600)
+  Meeting attendees:               chttr meeting calendar 'https://calendar.google.com/calendar/ical/…/basic.ics'
+                                   (Google Calendar > Settings > your calendar > Secret address in iCal format)
+  Speaker names in Meet calls:     restart Chromium once so it loads the chttr extension
+Check everything with: chttr doctor""")
+    return 0
