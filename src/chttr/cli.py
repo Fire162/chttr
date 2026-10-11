@@ -17,9 +17,13 @@ from .client import DaemonNotRunning, read_state, send
 ICONS = {"idle": "", "recording": "󰍬", "transcribing": "󰔟", "meeting": "󰑊"}
 
 
+def _with_meeting(state: str) -> str:
+    """Dictation idle while a meeting is being recorded shows as "meeting"."""
+    return "meeting" if state == "idle" and C.MEETING_STATE_FILE.exists() else state
+
+
 def _status_json(state: str) -> str:
-    if state == "idle" and C.MEETING_STATE_FILE.exists():
-        state = "meeting"       # dictation idle while a meeting is being recorded
+    state = _with_meeting(state)
     tooltip = {"idle": "chttr: idle", "recording": "chttr: recording", "transcribing": "chttr: transcribing",
                "meeting": "chttr: recording a meeting"}[state]
     return json.dumps({"text": ICONS[state], "alt": state, "class": state, "tooltip": tooltip})
@@ -66,6 +70,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             state = read_state()
             if state not in ICONS:
                 state = "idle"
+            state = _with_meeting(state) if args.json else state
             if state != last:
                 print(_status_json(state) if args.json else state, flush=True)
                 last = state
