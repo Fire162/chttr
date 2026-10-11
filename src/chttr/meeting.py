@@ -457,41 +457,25 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
         sp.seconds = sum(u.end - u.start for u in utts if u.speaker == sp.label and u.text)
     all_utts = sorted(mine + them, key=lambda u: u.start)
 
-    # ---- notes -------------------------------------------------------------
-    notes: dict = {}
     duration = max((len(a) for a in audio.values()), default=0) / SAMPLE_RATE
+    meta = update_meta(directory, me=me_name)
+    result = {
+        "meta": meta, "duration": duration,
+        "event": event.to_dict() if event else None,
+        "speakers": {k: asdict(v) for k, v in speakers.items()},
+        "utterances": [asdict(u) for u in all_utts],
+        "notes": {}, "notes_by_style": {},
+    }
+
+    # ---- notes -------------------------------------------------------------
     want_summary = cfg.meeting.summary if summary is None else summary
     if want_summary and all_utts and N.available(cfg.polish):
-        transcript = "\n".join(f"[{_fmt_ts(s)}] {label}: {text}" for label, s, text in _turns(all_utts))
-        when = datetime.fromtimestamp(started).astimezone()
-        meeting_desc = "\n".join(x for x in (
-            f"Calendar title: {event.title}" if event else "",
-            f"Started: {when:%A %Y-%m-%d %H:%M} ({duration / 60:.0f} min)",
-            f"Recorded by: {me_name} (their own microphone; their lines are labelled {me_name})",
-            f"Calendar description: {event.description[:1500]}" if event and event.description.strip() else "",
-        ) if x)
-        invited_desc = "\n".join(f"- {a['name'] or '(no name)'} <{a['email']}>" + (" (organizer)" if a["organizer"] else "")
-                                 + (" (the user)" if a["is_me"] else "") + (" (declined)" if a["status"] == "DECLINED" else "")
-                                 for a in attendees)
-        speakers_desc = "\n".join(f"- {sp.label}: " + {"me": "the user who recorded the meeting",
-                                                        "captions": "named by Meet's captions",
-                                                        "voice": "recognised by voice",
-                                                        "calendar": "the only other invitee",
-                                                        "unknown": "not identified"}[sp.source]
-                                  for sp in speakers.values() if sp.seconds)
-        unidentified = [sp.label for sp in speakers.values() if sp.source == "unknown" and sp.seconds]
         try:
             with D.timed("notes"):
-                notes = N.write_notes(cfg.polish, cfg.meeting.summary_effort, meeting_desc, invited_desc,
-                                      speakers_desc, unidentified, transcript)
+                write_notes(result, cfg, choose_style(result, cfg), meta.get("style_extra", ""))
         except Exception as exc:  # noqa: BLE001 - the transcript is still worth saving
             log.warning("notes failed: %s", exc)
-            notes = {"error": f"{type(exc).__name__}: {exc}"}
-        for guess in notes.get("speakers", []):
-            sp = speakers.get(guess.get("label", ""))
-            if sp and sp.source == "unknown" and guess.get("name") and guess.get("confidence") in ("high", "medium"):
-                _relabel(speakers, all_utts, notes, sp.label, guess["name"], guess.get("email", ""),
-                         "claude", f"{guess['confidence']} confidence: {guess.get('evidence', '')}")
+            result["notes"] = {"error": f"{type(exc).__name__}: {exc}"}
 
     # ---- remember voices we are sure of ------------------------------------
     for sp in speakers.values():
@@ -502,13 +486,6 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
     D.save_voices(voices)
     np.savez(directory / "speakers.npz", **{str(c): v for c, v in centroids.items()})
 
-    result = {
-        "meta": meta, "duration": duration,
-        "event": event.to_dict() if event else None,
-        "speakers": {k: asdict(v) for k, v in speakers.items()},
-        "utterances": [asdict(u) for u in all_utts],
-        "notes": notes,
-    }
     md = render(directory, result, cfg)
     result["markdown"] = str(md)
     write_json(directory / "result.json", result)
@@ -518,9 +495,9 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
     return md
 
 
-def _relabel(speakers: dict[str, Speaker], utts: list[Utterance], notes: dict, old: str, name: str,
-             email: str, source: str, evidence: str) -> str:
-    """Rename a speaker everywhere (merging into an existing speaker of that name)."""
+def _relabel(result: dict, old: str, name: str, email: str, source: str, evidence: str) -> None:
+    """Rename a speaker everywhere in a result (merging into an existing speaker of that name)."""
+    speakers = {k: Speaker(**v) for k, v in result["speakers"].items()}
     sp = speakers.pop(old)
     target = speakers.get(name)
     if target:
@@ -530,16 +507,139 @@ def _relabel(speakers: dict[str, Speaker], utts: list[Utterance], notes: dict, o
     else:
         sp.label, sp.name, sp.email, sp.source, sp.evidence = name, name, email or sp.email, source, evidence
         speakers[name] = sp
-    for u in utts:
-        if u.speaker == old:
-            u.speaker = name
+    result["speakers"] = {k: asdict(v) for k, v in speakers.items()}
+    for u in result["utterances"]:
+        if u["speaker"] == old:
+            u["speaker"] = name
     pattern = re.compile(r"\b" + re.escape(old) + r"\b")
-    for key in ("summary", "decisions", "open_questions"):
-        notes[key] = [pattern.sub(name, s) for s in notes.get(key, [])]
-    for item in notes.get("action_items", []):
-        item["owner"] = name if item.get("owner") == old else item.get("owner", "")
-        item["task"] = pattern.sub(name, item.get("task", ""))
-    return name
+    seen = set()
+    for notes in [result.get("notes") or {}, *(result.get("notes_by_style") or {}).values()]:
+        if id(notes) in seen:
+            continue
+        seen.add(id(notes))
+        for sec in notes.get("sections", []):
+            sec["items"] = [pattern.sub(name, x) for x in sec.get("items", [])]
+        for item in notes.get("action_items", []):
+            item["owner"] = name if item.get("owner") == old else item.get("owner", "")
+            item["task"] = pattern.sub(name, item.get("task", ""))
+
+
+# ---- note styles ----------------------------------------------------------
+
+SOURCE_DESC = {"me": "the user who recorded the meeting", "captions": "named by Meet's captions",
+               "voice": "recognised by voice", "calendar": "the only other invitee",
+               "claude": "identified from the conversation", "corrected": "named by the user",
+               "unknown": "not identified"}
+
+
+def _notes_inputs(result: dict) -> tuple[str, str, str, list[str], str]:
+    """(meeting, invited, speakers, unidentified, transcript) for the notes prompt."""
+    meta, event = result["meta"], result.get("event") or {}
+    speakers = {k: Speaker(**v) for k, v in result["speakers"].items()}
+    utts = [Utterance(**u) for u in result["utterances"]]
+    me = meta.get("me") or next((s.label for s in speakers.values() if s.source == "me"), "Me")
+    when = datetime.fromtimestamp(float(meta["started"])).astimezone()
+    meeting = "\n".join(x for x in (
+        f"Calendar title: {event['title']}" if event.get("title") else "",
+        f"Started: {when:%A %Y-%m-%d %H:%M} ({result['duration'] / 60:.0f} min)",
+        f"Recorded by: {me} (their own microphone; their lines are labelled {me})",
+        f"Calendar description: {event['description'][:1500]}" if (event.get("description") or "").strip() else "",
+    ) if x)
+    invited = "\n".join(f"- {a['name'] or '(no name)'} <{a['email']}>" + (" (organizer)" if a["organizer"] else "")
+                        + (" (the user)" if a["is_me"] else "") + (" (declined)" if a["status"] == "DECLINED" else "")
+                        for a in event.get("attendees", []))
+    speakers_desc = "\n".join(f"- {sp.label}: {SOURCE_DESC.get(sp.source, sp.source)}"
+                              for sp in speakers.values() if sp.seconds)
+    unidentified = [sp.label for sp in speakers.values() if sp.source == "unknown" and sp.seconds]
+    transcript = "\n".join(f"[{_fmt_ts(s)}] {label}: {text}" for label, s, text in _turns(utts))
+    return meeting, invited, speakers_desc, unidentified, transcript
+
+
+def choose_style(result: dict, cfg: Config) -> str:
+    """The meeting's own choice (set during the call), else a calendar-title rule, else
+    [meeting] style, where "auto" lets Claude pick."""
+    from . import notes as N
+
+    styles = N.load_styles()
+    chosen = result["meta"].get("style", "")
+    if chosen in styles or (chosen == N.CUSTOM and result["meta"].get("style_extra")):
+        return chosen
+    title = (result.get("event") or {}).get("title") or result["meta"].get("title") or ""
+    for rule in cfg.meeting.style_rules:
+        try:
+            if title and rule.get("style") in styles and re.search(rule.get("match", ""), title, re.IGNORECASE):
+                return rule["style"]
+        except re.error as exc:
+            log.warning("style rule %r: %s", rule, exc)
+    if cfg.meeting.style in styles:
+        return cfg.meeting.style
+    if cfg.meeting.style == "auto":
+        meeting, invited, _, _, transcript = _notes_inputs(result)
+        try:
+            picked = N.pick_style(cfg.polish, styles, title, invited, transcript[:6000])
+            log.info("style picked automatically: %s", picked)
+            return picked
+        except Exception as exc:  # noqa: BLE001
+            log.warning("automatic style pick failed (%s); using general", exc)
+    return "general"
+
+
+def write_notes(result: dict, cfg: Config, style_id: str, extra: str = "", fresh: bool = True) -> dict:
+    """Write (or reuse) the notes for one style and make them the meeting's current notes.
+    style_id "custom" with `extra` = free-form instructions."""
+    import hashlib
+
+    from . import notes as N
+
+    styles = N.load_styles()
+    if style_id == N.CUSTOM:
+        if not extra:
+            raise ValueError("a custom style needs instructions (--prompt)")
+        style = N.custom_style(extra)
+        extra_for_style = ""
+    elif style_id in styles:
+        style, extra_for_style = styles[style_id], extra
+    else:
+        raise ValueError(f"no note style {style_id!r} (see: chttr meeting styles)")
+    key = style_id + (f"+{hashlib.sha1(extra.encode()).hexdigest()[:8]}" if extra else "")
+    cache = result.setdefault("notes_by_style", {})
+    if not fresh and key in cache:
+        result["notes"] = cache[key]
+        return cache[key]
+    meeting, invited, speakers_desc, unidentified, transcript = _notes_inputs(result)
+    notes = N.write_notes(cfg.polish, cfg.meeting.summary_effort, style, meeting, invited, speakers_desc,
+                          unidentified, transcript, extra_for_style)
+    if style_id == N.CUSTOM:
+        notes["extra"] = extra
+    cache[key] = notes
+    result["notes"] = notes
+    for guess in notes.get("speakers", []):
+        label = guess.get("label", "")
+        sp = result["speakers"].get(label)
+        if sp and sp["source"] == "unknown" and guess.get("name") and guess.get("confidence") in ("high", "medium"):
+            _relabel(result, label, guess["name"], guess.get("email", ""), "claude",
+                     f"{guess['confidence']} confidence: {guess.get('evidence', '')}")
+    return notes
+
+
+def restyle(directory: Path, cfg: Config, style_id: str, extra: str = "", fresh: bool = False) -> Path:
+    """Switch a processed meeting's notes to another style (from the cache when it was
+    written before, unless `fresh`) and rewrite the Markdown."""
+    from . import notes as N
+
+    result = read_json(directory / "result.json")
+    if not result:
+        raise SystemExit(f"{directory.name} has not been processed yet")
+    if not result["utterances"]:
+        raise SystemExit("this meeting has no transcript to write notes from")
+    if not N.available(cfg.polish):
+        raise SystemExit("note styles need Claude: put an Anthropic API key in ~/.config/chttr/anthropic-api-key")
+    write_notes(result, cfg, style_id, extra, fresh=fresh)
+    md = render(directory, result, cfg)
+    result["markdown"] = str(md)
+    write_json(directory / "result.json", result)
+    update_meta(directory, style=style_id)
+    return md
 
 
 def _finish_audio(directory: Path, md: Path, cfg: Config) -> None:
@@ -575,7 +675,7 @@ def render(directory: Path, result: dict, cfg: Config) -> Path:
     utts = [Utterance(**u) for u in result["utterances"]]
     started = datetime.fromtimestamp(float(meta["started"])).astimezone()
     ended = started + timedelta(seconds=result["duration"])
-    title = notes.get("title") or (event or {}).get("title") or meta.get("title") or "Meeting"
+    title = (event or {}).get("title") or notes.get("title") or meta.get("title") or "Meeting"
     attendees = (event or {}).get("attendees", [])
     spoke = {sp.email for sp in speakers.values() if sp.email and sp.seconds} | \
             {sp.name.lower() for sp in speakers.values() if sp.seconds}
@@ -592,6 +692,8 @@ def render(directory: Path, result: dict, cfg: Config) -> Path:
             lines += [f"  - name: {_q(a['name'])}", f"    email: {_q(a['email'])}",
                       f"    spoke: {'true' if a['email'] in spoke or (a['name'] and a['name'].lower() in spoke) else 'false'}"]
     lines.append("speakers: [" + ", ".join(_q(s.label) for s in speakers.values() if s.seconds) + "]")
+    if notes.get("style"):
+        lines.append(f"notes_style: {_q(notes['style'])}")
     lines += ["tags: [meeting]", "---", "", f"# {title}", ""]
     when = f"{started:%a %b %-d, %Y} · {started:%H:%M}–{ended:%H:%M} ({round(result['duration'] / 60)} min)"
     lines.append(f"**{when}**" + (f" · Google Meet `{meta['code']}`" if meta.get("code") else ""))
@@ -606,18 +708,31 @@ def render(directory: Path, result: dict, cfg: Config) -> Path:
         lines.append("**Also speaking:** " + ", ".join(extra))
     lines.append("")
 
-    def section(heading: str, items: list[str]) -> None:
-        if items:
-            lines.extend([f"## {heading}", ""] + [f"- {x}" for x in items] + [""])
-
     if notes.get("error"):
         lines += [f"> Notes could not be written: {notes['error']}", ""]
-    section("Summary", notes.get("summary", []))
-    section("Decisions", notes.get("decisions", []))
-    actions = [f"[ ] " + (f"**{a['owner']}**: " if a.get("owner") else "") + a["task"]
-               + (f" *(due {a['due']})*" if a.get("due") else "") for a in notes.get("action_items", [])]
-    section("Action items", actions)
-    section("Open questions", notes.get("open_questions", []))
+    if notes.get("sections"):
+        how = f"*{notes.get('style_name', 'Notes')} notes*"
+        if notes.get("style") == "custom" and notes.get("extra"):
+            how = f"*Custom notes: {notes['extra'][:200]}*"
+        elif notes.get("extra"):
+            how += f" *({notes['extra'][:200]})*"
+        lines += [how + f" · switch with `chttr meeting style <style> --meeting {directory.name}`", ""]
+    for sec in notes.get("sections", []):
+        items = [x.strip() for x in sec.get("items", []) if x.strip()]
+        if not items:
+            continue
+        lines += [f"## {sec['title']}", ""]
+        if sec.get("kind") == "paragraph":
+            lines += [x for item in items for x in (item, "")]
+        elif sec.get("kind") == "quotes":
+            lines += [x for item in items for x in (f"> {item}", "")]
+        else:
+            lines += [f"- {x}" for x in items] + [""]
+    actions = notes.get("action_items", [])
+    if actions:
+        lines += [f"## {notes.get('actions_heading') or 'Action items'}", ""]
+        lines += [f"- [ ] " + (f"**{a['owner']}**: " if a.get("owner") else "") + a["task"]
+                  + (f" *(due {a['due']})*" if a.get("due") else "") for a in actions] + [""]
 
     lines += ["## Transcript", ""]
     for label, start, text in _turns(utts):
@@ -667,10 +782,8 @@ def rename(directory: Path, old: str, name: str, email: str, cfg: Config) -> Pat
     if speakers[old].source == "me":
         raise SystemExit("that's you; set [meeting] me = \"Your Name\" in the config instead")
     clusters = list(speakers[old].clusters)
+    _relabel(result, old, name, email, "corrected", "corrected by hand")
     utts = [Utterance(**u) for u in result["utterances"]]
-    notes = result.get("notes") or {}
-    _relabel(speakers, utts, notes, old, name, email, "corrected", "corrected by hand")
-    result.update(speakers={k: asdict(v) for k, v in speakers.items()}, utterances=[asdict(u) for u in utts], notes=notes)
     md = render(directory, result, cfg)
     result["markdown"] = str(md)
     write_json(directory / "result.json", result)

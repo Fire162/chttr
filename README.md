@@ -35,8 +35,9 @@ and writes meeting summaries.
 - **Meeting transcripts**: records your mic and the other side as separate
   channels, splits the other side into voices, and names them from Google
   Meet's captions, your Google Calendar and voices it has heard before. Writes
-  Markdown notes with a Claude summary, decisions and action items. Everything
-  but the summary runs locally.
+  Markdown notes in the style you choose (general, BANT, MEDDPICC, 1:1,
+  standup, interview, retro and more, or your own), switchable after the call.
+  Everything but the notes runs locally.
 - **History and stats**: a picker to re-type any past dictation; words per day,
   speaking speed and time saved.
 - Auto-unmute of the mic, sounds, notifications, a state file for the bar.
@@ -168,6 +169,76 @@ How it works:
   written. Audio is deleted afterwards unless `keep_audio = true` (then it's
   kept as stereo Opus next to the notes: you left, them right).
 
+### Note styles
+
+Notes come in 18 styles, and a meeting can switch style at any time, even
+weeks after the call, without re-transcribing:
+
+| Style | For |
+|---|---|
+| `general` | Summary, decisions, open questions (fits most meetings) |
+| `brief` | Executive TL;DR |
+| `bant` | Sales qualification: Budget, Authority, Need, Timeline, objections, competitors |
+| `meddpicc` | Enterprise sales: Metrics, Economic buyer, Decision criteria/process, Paper process, Pain, Champion, Competition |
+| `spin` | Sales discovery: Situation, Problem, Implication, Need-payoff, best quotes |
+| `customer-success` | Account health, goals, wins, issues, churn risks, expansion |
+| `one-on-one` | Updates, wins, blockers, feedback, growth |
+| `standup` | Progress, plans and blockers per person |
+| `interview` | Hiring scorecard: evidence by topic, strengths, gaps (no hire/no-hire verdicts) |
+| `user-research` | Participant context, goals, pain points, verbatim quotes, insights |
+| `support` | Issue, impact, troubleshooting, resolution, root cause |
+| `kickoff` | Goals, scope, out of scope, milestones, owners, risks |
+| `retro` | Went well, didn't, ideas, changes |
+| `brainstorm` | Ideas by theme, most promising, parking lot |
+| `decision` | Context, options, decision, rationale, dissent |
+| `minutes` | Formal minutes: agenda items, motions and votes |
+| `investor` | Metrics, highlights, lowlights, investor feedback, asks |
+| `lecture` | Concepts, examples, takeaways, follow-up questions |
+
+Which style a meeting gets, first match wins:
+
+1. what you picked for it: `chttr meeting style bant` (during the call, or
+   from the bar menu's *Notes style for this meeting*),
+2. a calendar-title rule in `[meeting] style_rules` (1:1s, standups, retros
+   and interviews are set up already; add `{ match = "demo|discovery", style = "bant" }`),
+3. `[meeting] style`: `"auto"` (the default) lets Claude pick from the
+   conversation, or name one style for everything.
+
+After the call:
+
+```bash
+chttr meeting style meddpicc                       # rewrite the last meeting's notes as MEDDPICC
+chttr meeting style bant --meeting 2026-10-11-1400 # a specific meeting (chttr meeting list)
+chttr meeting style --prompt "every number and who said it, plus security concerns"
+chttr meeting style bant --prompt "they're also evaluating Gong"   # a style plus extra instructions
+chttr meeting styles                               # list them
+```
+
+or the bar menu's *Change the last meeting's notes style…*, which includes
+*Custom instructions…*. Every version is kept: switching back to a style you
+already had is instant and free (`--fresh` writes it again). The transcript is
+sent with prompt caching, so trying a few styles in a row costs little.
+
+Your own styles go in `~/.config/chttr/note-styles.toml`, in the same format
+as the built-in [`note_styles.toml`](src/chttr/note_styles.toml) (reuse an id to
+replace a built-in one):
+
+```toml
+[[style]]
+id = "podcast"
+name = "Podcast episode"
+description = "Show notes for a podcast recording."
+actions = ""                      # no action items
+sections = [
+  { title = "Episode summary", guide = "Two paragraphs.", kind = "paragraph" },
+  { title = "Timestamps", guide = "Topic changes as mm:ss - topic." },
+  { title = "Quotable", guide = "Short verbatim quotes.", kind = "quotes" },
+]
+```
+
+Note styles need Claude (an API key); without one you get the transcript with
+speaker names.
+
 The extension lives in `src/chttr/extension/` and is loaded through Omarchy's
 `--load-extension` line in `~/.config/chromium-flags.conf`. Meet's page
 structure is undocumented; if names stop appearing after a Meet update, the
@@ -204,6 +275,8 @@ recorded. Tell people.
 | `chttr meeting process [ID] [--no-summary]` | (Re)write the notes for a meeting |
 | `chttr meeting rename OLD NEW [--email E] [--meeting ID]` | Fix a speaker's name and remember their voice |
 | `chttr meeting calendar [URL]` | Add a secret iCal address; show the next 48 hours |
+| `chttr meeting style [STYLE] [--prompt TEXT] [--meeting ID]` | Set or switch a meeting's note style |
+| `chttr meeting styles` | List note styles |
 | `chttr meeting voices [--forget KEY]` | Remembered voices |
 | `chttr meeting install` | Register the Meet extension and native host |
 

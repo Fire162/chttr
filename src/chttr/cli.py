@@ -387,6 +387,73 @@ def cmd_meeting_voices(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_meeting_styles(args: argparse.Namespace) -> int:
+    from .notes import USER_STYLES, load_styles
+
+    cfg = C.load_config()
+    for s in load_styles().values():
+        mark = "*" if s.id == cfg.meeting.style else " "
+        print(f"{mark} {s.id:17} {s.name:28} {s.description}" + ("" if s.builtin else "  (yours)"))
+    print(f"\n* default ([meeting] style = {cfg.meeting.style!r}; \"auto\" lets Claude pick per meeting)")
+    print(f"Add your own in {USER_STYLES}; see the built-in ones for the format.")
+    print("Use: chttr meeting style <id>   or   chttr meeting style --prompt \"focus on engineering risks\"")
+    return 0
+
+
+def _recording_dir() -> Path | None:
+    try:
+        reply = send("meeting status")
+    except DaemonNotRunning:
+        return None
+    m = reply.get("meeting")
+    return Path(m["dir"]) if reply.get("recording") and m else None
+
+
+def cmd_meeting_style(args: argparse.Namespace) -> int:
+    from .meeting import notify_done, read_json, resolve, restyle, summary_line, update_meta
+    from .notes import CUSTOM, load_styles
+
+    styles = load_styles()
+    style = args.style or (CUSTOM if args.prompt else "")
+    if style and style != CUSTOM and style not in styles:
+        print(f"no note style {style!r}; one of: {', '.join(styles)}", file=sys.stderr)
+        return 1
+    live = None if args.meeting else _recording_dir()
+    directory = live or resolve(args.meeting)
+    meta = read_json(directory / "meta.json", {}) or {}
+    if not style:
+        current = (read_json(directory / "result.json", {}) or {}).get("notes", {}).get("style") or meta.get("style")
+        print(f"{directory.name}: {current or 'not chosen yet'}  (chttr meeting styles lists the options)")
+        return 0
+    name = styles[style].name if style in styles else "custom"
+    if live or meta.get("status") in ("recording", "recorded"):
+        update_meta(directory, style=style, style_extra=args.prompt or "")
+        print(f"this meeting's notes will be written as {name}")
+        return 0
+    if meta.get("status") == "processing":
+        print("this meeting is still being processed; run this again when its notes are saved", file=sys.stderr)
+        return 1
+    if args.notify:
+        import subprocess
+
+        subprocess.run(["notify-send", "-a", "chttr", "-t", "4000", f"Rewriting the notes as {name}…",
+                        directory.name], check=False)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
+    try:
+        md = restyle(directory, C.load_config(), style, args.prompt or "", fresh=args.fresh)
+    except (SystemExit, Exception) as exc:
+        if args.notify:
+            import subprocess
+
+            subprocess.run(["notify-send", "-a", "chttr", "-u", "critical", "Couldn't change the notes style",
+                            str(exc)[:300]], check=False)
+        raise
+    print(md)
+    if args.notify:
+        notify_done(md, f"{name} notes · " + summary_line(md, directory))
+    return 0
+
+
 def cmd_meeting_install(args: argparse.Namespace) -> int:
     from .native_host import EXTENSION_DIR, extension_id, install
 
@@ -419,6 +486,39 @@ def _terminal(command: str) -> None:
     subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _pick_style(directory: Path) -> None:
+    """Style picker for one meeting; the rewrite runs in the background with a notification."""
+    import subprocess
+
+    from .history import MENU
+    from .meeting import read_json
+    from .notes import load_styles
+
+    styles = load_styles()
+    current = (read_json(directory / "result.json", {}) or {}).get("notes", {}).get("style") \
+        or (read_json(directory / "meta.json", {}) or {}).get("style", "")
+    rows = [f"{'󰄬' if s.id == current else '󰈙'}\t{s.name}\t{s.description}" for s in styles.values()]
+    rows.append("󰏫\tCustom instructions…\tDescribe the notes you want, in your own words")
+    out = subprocess.run([MENU, "Notes style", *rows, "--", "--width", "760"], capture_output=True, text=True)
+    choice = out.stdout.strip().split("\t")[0]
+    if not choice:
+        return
+    cmd = [sys.argv[0], "meeting", "style", "--meeting", str(directory), "--notify"]
+    if choice.startswith("Custom instructions"):
+        ask = subprocess.run(["omarchy-menu-input", "What should the notes focus on?", "--width", "640"],
+                             capture_output=True, text=True)
+        prompt = ask.stdout.strip()
+        if not prompt:
+            return
+        cmd += ["--prompt", prompt]
+    else:
+        style = next((s.id for s in styles.values() if s.name == choice), "")
+        if not style:
+            return
+        cmd.append(style)
+    subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def cmd_menu(args: argparse.Namespace) -> int:
     """The bar widget's menu (Omarchy's menu picker)."""
     import subprocess
@@ -443,6 +543,15 @@ def cmd_menu(args: argparse.Namespace) -> int:
         items.append(("󰓛  Stop recording the meeting", lambda: send("meeting stop")))
     else:
         items.append(("󰑊  Record a meeting", lambda: send("meeting start")))
+    target = None
+    if status and status.get("recording") and status.get("meeting"):
+        target = Path(status["meeting"]["dir"])
+        items.append(("󰏫  Notes style for this meeting…", lambda: _pick_style(target)))
+    else:
+        done = [d for d in reversed(meeting_dirs()) if (read_json(d / "meta.json", {}) or {}).get("status") == "done"]
+        if done:
+            target = done[0]
+            items.append(("󰏫  Change the last meeting's notes style…", lambda: _pick_style(target)))
     if notes:
         items.append((f"󰈙  Open the last meeting notes ({notes[0].stem[:40]})",
                       lambda: subprocess.Popen(["xdg-open", str(notes[0])], start_new_session=True)))
@@ -579,6 +688,15 @@ def build_parser() -> argparse.ArgumentParser:
     mv = msub.add_parser("voices", help="list remembered voices")
     mv.add_argument("--forget", metavar="EMAIL_OR_NAME")
     mv.set_defaults(func=cmd_meeting_voices)
+    mss = msub.add_parser("styles", help="list note styles (General, BANT, 1:1, standup, ...)")
+    mss.set_defaults(func=cmd_meeting_styles)
+    mst = msub.add_parser("style", help="set a meeting's notes style; after the call this rewrites the notes")
+    mst.add_argument("style", nargs="?", help="style id (chttr meeting styles); omit to show the current one")
+    mst.add_argument("--prompt", help="extra instructions, or with no style: fully custom notes")
+    mst.add_argument("--meeting", help="meeting id (default: the one being recorded, else the latest)")
+    mst.add_argument("--fresh", action="store_true", help="write again even if this style was written before")
+    mst.add_argument("--notify", action="store_true", help=argparse.SUPPRESS)
+    mst.set_defaults(func=cmd_meeting_style)
     mi = msub.add_parser("install", help="register the Google Meet extension and its native host")
     mi.set_defaults(func=cmd_meeting_install)
 

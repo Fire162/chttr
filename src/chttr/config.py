@@ -124,9 +124,22 @@ dir = "~/Documents/Meetings"
 auto = "ask"
 # Keep the audio (stereo Opus: you left, them right) next to the notes
 keep_audio = false
-# Summary, decisions and action items with the [polish] Claude model (needs a key)
+# Notes (summary, sections, action items) with the [polish] Claude model (needs a key)
 summary = true
 summary_effort = "medium"
+# Note style: "auto" (Claude picks from the meeting), or a style id such as
+# general, brief, bant, meddpicc, spin, customer-success, one-on-one, standup,
+# interview, user-research, support, kickoff, retro, brainstorm, decision,
+# minutes, investor, lecture. List them with: chttr meeting styles
+# Change one meeting's style any time, even after the call: chttr meeting style bant
+style = "auto"
+# Styles by calendar title (regex, case-insensitive); first match wins, before `style`.
+style_rules = [
+  { match = '\\b(1:1|1-1|1on1|one[- ]on[- ]one)\\b', style = "one-on-one" },
+  { match = '\\b(stand-?up|daily sync|scrum)\\b', style = "standup" },
+  { match = '\\bretro(spective)?\\b', style = "retro" },
+  { match = '\\binterview\\b', style = "interview" },
+]
 # Your name in transcripts; "" = from your calendar, else "Me"
 me = ""
 # File with secret iCal addresses, one per line (Google Calendar > Settings >
@@ -233,6 +246,13 @@ class MeetingCfg:
     keep_audio: bool = False
     summary: bool = True
     summary_effort: str = "medium"
+    style: str = "auto"
+    style_rules: list = field(default_factory=lambda: [
+        {"match": r"\b(1:1|1-1|1on1|one[- ]on[- ]one)\b", "style": "one-on-one"},
+        {"match": r"\b(stand-?up|daily sync|scrum)\b", "style": "standup"},
+        {"match": r"\bretro(spective)?\b", "style": "retro"},
+        {"match": r"\binterview\b", "style": "interview"},
+    ])
     me: str = ""
     calendar_file: str = "~/.config/chttr/calendar-urls"
     max_hours: float = 4

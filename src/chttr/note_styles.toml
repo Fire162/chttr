@@ -1,0 +1,261 @@
+# Built-in meeting note styles. Add your own (or override one by reusing its id)
+# in ~/.config/chttr/note-styles.toml with the same format.
+#
+# [[style]]
+# id           short name for the command line: chttr meeting style <id>
+# name         shown in menus
+# description  one line, also used when chttr picks a style automatically
+# instructions what to pay attention to (optional)
+# actions      heading for the action items list ("" = no action items)
+# sections     in order; each has a title and a guide, and optionally
+#              kind = "bullets" (default) | "paragraph" | "quotes"
+#
+# A section the meeting never touched is still written, with a short "Not
+# discussed" line, so gaps (no budget talk, no decision maker) are visible.
+
+[[style]]
+id = "general"
+name = "General"
+description = "Summary, key points, decisions and open questions. Fits most meetings."
+actions = "Action items"
+sections = [
+  { title = "Summary", guide = "3-8 bullets covering what was discussed and concluded, most important first." },
+  { title = "Decisions", guide = "What was agreed." },
+  { title = "Open questions", guide = "Unresolved questions or disagreements." },
+]
+
+[[style]]
+id = "brief"
+name = "Executive brief"
+description = "A TL;DR for someone who wasn't there: a few lines, nothing else."
+instructions = "Be ruthless: only what a busy executive needs. No more than 5 bullets in total."
+actions = "Next steps"
+sections = [
+  { title = "TL;DR", guide = "2-3 sentences: what this meeting was and what came out of it.", kind = "paragraph" },
+  { title = "What matters", guide = "At most 3 bullets: decisions, risks or numbers that need attention." },
+]
+
+[[style]]
+id = "bant"
+name = "Sales: BANT"
+description = "Sales qualification: Budget, Authority, Need, Timeline, plus objections and competitors."
+instructions = """You are writing notes for the sales rep who ran this call, to update their CRM. \
+"Prospect" means the people from the other company. Quote numbers, dates and names exactly as said. \
+Mark anything the rep should confirm on the next call."""
+actions = "Next steps"
+sections = [
+  { title = "Deal summary", guide = "Who the prospect is, what they want, and where the deal stands after this call.", kind = "paragraph" },
+  { title = "Budget", guide = "Budget amount or range, how it's funded, pricing reactions. Say if it wasn't discussed." },
+  { title = "Authority", guide = "Who decides, who influences, who signs; the people on this call and their roles." },
+  { title = "Need", guide = "The problem they're trying to solve, its impact, and why now." },
+  { title = "Timeline", guide = "Deadlines, go-live dates, evaluation and purchase timing." },
+  { title = "Objections and concerns", guide = "Pushback, risks and hesitations, and how they were answered." },
+  { title = "Competitors and alternatives", guide = "Other vendors, in-house options or doing nothing." },
+]
+
+[[style]]
+id = "meddpicc"
+name = "Sales: MEDDPICC"
+description = "Enterprise sales qualification: Metrics, Economic buyer, Decision criteria and process, Paper process, Pain, Champion, Competition."
+instructions = """You are writing notes for the account executive who ran this call. "Prospect" means the \
+other company. Be specific and skeptical: separate what the prospect said from what is assumed. \
+Flag every MEDDPICC element that is still unknown."""
+actions = "Next steps"
+sections = [
+  { title = "Deal summary", guide = "Where the opportunity stands after this call.", kind = "paragraph" },
+  { title = "Metrics", guide = "Quantified business outcomes the prospect cares about." },
+  { title = "Economic buyer", guide = "Who controls the budget, and whether we have access to them." },
+  { title = "Decision criteria", guide = "How they will judge options: technical, commercial, risk." },
+  { title = "Decision process", guide = "Steps, people and dates between now and a decision." },
+  { title = "Paper process", guide = "Procurement, legal, security review and signing steps." },
+  { title = "Identified pain", guide = "The business pain and its cost if nothing changes." },
+  { title = "Champion", guide = "Who is selling for us internally, and evidence they will." },
+  { title = "Competition", guide = "Competitors, alternatives and status quo, and how we compare in their eyes." },
+]
+
+[[style]]
+id = "spin"
+name = "Sales: SPIN discovery"
+description = "Discovery call notes: Situation, Problem, Implication, Need-payoff."
+instructions = "Notes for the seller who ran this discovery call. \"Prospect\" means the other company."
+actions = "Next steps"
+sections = [
+  { title = "Situation", guide = "The prospect's current setup, tools, team and process." },
+  { title = "Problems", guide = "Difficulties and dissatisfactions they described." },
+  { title = "Implications", guide = "Consequences of those problems: cost, risk, lost time, missed goals." },
+  { title = "Need-payoff", guide = "The value they said a solution would bring, in their words where possible." },
+  { title = "Best quotes", guide = "Up to 5 short verbatim prospect quotes worth reusing.", kind = "quotes" },
+]
+
+[[style]]
+id = "customer-success"
+name = "Customer success check-in"
+description = "Account health for an existing customer: goals, wins, issues, risks and expansion."
+instructions = "Notes for the account manager. \"Customer\" means the other company."
+actions = "Follow-ups"
+sections = [
+  { title = "Account health", guide = "Overall sentiment (good / mixed / at risk) and why, in one or two sentences.", kind = "paragraph" },
+  { title = "Customer goals", guide = "What they're trying to achieve this period." },
+  { title = "Wins and value delivered", guide = "What is working, with any numbers." },
+  { title = "Issues and requests", guide = "Bugs, gaps, feature requests, support problems." },
+  { title = "Risks and churn signals", guide = "Budget cuts, champion leaving, competitor interest, low usage." },
+  { title = "Expansion opportunities", guide = "New teams, use cases, upgrades mentioned." },
+]
+
+[[style]]
+id = "one-on-one"
+name = "1:1"
+description = "Manager and report check-in: updates, blockers, feedback, growth."
+actions = "Follow-ups"
+sections = [
+  { title = "Updates", guide = "What each person shared about their work." },
+  { title = "Wins", guide = "Things that went well, to remember for reviews." },
+  { title = "Blockers and concerns", guide = "What's in the way, and anything worrying either person." },
+  { title = "Feedback", guide = "Feedback given in either direction, stated neutrally." },
+  { title = "Growth and career", guide = "Goals, skills, opportunities discussed." },
+]
+
+[[style]]
+id = "standup"
+name = "Standup"
+description = "Daily or weekly team sync: progress, plans and blockers per person."
+instructions = "Group by person. Keep each item to one line."
+actions = "Action items"
+sections = [
+  { title = "Progress", guide = "What each person finished or moved forward, as \"Name: item\"." },
+  { title = "Plans", guide = "What each person is doing next, as \"Name: item\"." },
+  { title = "Blockers", guide = "What's blocking whom, and who can help." },
+]
+
+[[style]]
+id = "interview"
+name = "Interview scorecard"
+description = "Hiring interview: background, evidence for each skill discussed, strengths and concerns."
+instructions = """Notes for the interviewer. Record evidence, not verdicts: what the candidate said or did. \
+Never comment on age, gender, ethnicity, religion, disability, family, accent or anything else unrelated \
+to the job. Do not recommend hire or no-hire; the interviewer decides."""
+actions = "Follow-ups"
+sections = [
+  { title = "Candidate background", guide = "Relevant experience and context the candidate gave." },
+  { title = "Evidence by topic", guide = "For each skill or question area covered: what the candidate said or demonstrated, as \"Topic: evidence\"." },
+  { title = "Strengths", guide = "Where the evidence was strong." },
+  { title = "Concerns and gaps", guide = "Where the evidence was weak or missing, and what to probe next." },
+  { title = "Candidate questions", guide = "What the candidate asked, which shows what they care about." },
+]
+
+[[style]]
+id = "user-research"
+name = "User research"
+description = "Customer or user interview: context, goals, pain points, verbatim quotes, insights."
+instructions = "\"Participant\" means the person being interviewed. Prefer their own words."
+actions = "Follow-ups"
+sections = [
+  { title = "Participant context", guide = "Role, environment, tools, how they use the product." },
+  { title = "Goals", guide = "What they are trying to get done." },
+  { title = "Pain points", guide = "Frustrations and workarounds, with how often and how bad." },
+  { title = "Quotes", guide = "5-10 short verbatim quotes that capture the interview.", kind = "quotes" },
+  { title = "Feature requests", guide = "What they asked for, and the underlying need." },
+  { title = "Insights", guide = "Patterns or surprises worth sharing with the team; label your inferences." },
+]
+
+[[style]]
+id = "support"
+name = "Support / escalation"
+description = "Customer support or incident call: issue, impact, what was tried, resolution."
+actions = "Follow-ups"
+sections = [
+  { title = "Issue", guide = "The problem as reported, with error messages, versions, environment." },
+  { title = "Impact", guide = "Who is affected, how badly, since when." },
+  { title = "Troubleshooting", guide = "Steps tried and their results, in order." },
+  { title = "Resolution or workaround", guide = "What fixed it, or the current workaround and its limits." },
+  { title = "Root cause", guide = "Known or suspected cause. Say if unknown." },
+]
+
+[[style]]
+id = "kickoff"
+name = "Project kickoff / planning"
+description = "Goals, scope, milestones, owners, risks and dependencies for a project."
+actions = "Action items"
+sections = [
+  { title = "Goals", guide = "What success looks like, with measures if given." },
+  { title = "Scope", guide = "What is in scope." },
+  { title = "Out of scope", guide = "What was explicitly excluded or deferred." },
+  { title = "Milestones and dates", guide = "Deliverables and when." },
+  { title = "Owners", guide = "Who owns what, as \"Name: area\"." },
+  { title = "Risks and dependencies", guide = "What could derail it and what it depends on." },
+]
+
+[[style]]
+id = "retro"
+name = "Retrospective"
+description = "What went well, what didn't, and what to change."
+actions = "Changes we'll make"
+sections = [
+  { title = "Went well", guide = "Things to keep doing." },
+  { title = "Didn't go well", guide = "Problems and frustrations, stated without blame." },
+  { title = "Ideas", guide = "Suggestions raised, including ones not adopted." },
+]
+
+[[style]]
+id = "brainstorm"
+name = "Brainstorm"
+description = "Ideas grouped by theme, the promising ones, and the parking lot."
+instructions = "Capture every distinct idea, even half-formed ones; credit who suggested it."
+actions = "Next steps"
+sections = [
+  { title = "Problem", guide = "What the session was trying to solve.", kind = "paragraph" },
+  { title = "Ideas by theme", guide = "Every idea, grouped as \"Theme: idea (who)\"." },
+  { title = "Most promising", guide = "Ideas the group gravitated to, and why." },
+  { title = "Parking lot", guide = "Ideas or topics deferred for later." },
+]
+
+[[style]]
+id = "decision"
+name = "Decision record"
+description = "For meetings that decide something: context, options, decision, rationale, dissent."
+actions = "Action items"
+sections = [
+  { title = "Context", guide = "The situation and why a decision was needed.", kind = "paragraph" },
+  { title = "Options considered", guide = "Each option with its pros and cons as discussed." },
+  { title = "Decision", guide = "What was decided, by whom. Say if no decision was reached." },
+  { title = "Rationale", guide = "Why this option won." },
+  { title = "Dissent and risks", guide = "Disagreements, concerns and what would make us revisit." },
+]
+
+[[style]]
+id = "minutes"
+name = "Formal minutes"
+description = "Board, committee or governance minutes: agenda items, discussion, motions and votes."
+instructions = "Neutral, formal, third person. Record motions and outcomes exactly; don't editorialize."
+actions = "Action items"
+sections = [
+  { title = "Agenda items", guide = "Each topic in order with a one or two sentence neutral summary of the discussion, as \"Topic: summary\"." },
+  { title = "Motions and resolutions", guide = "Each motion, who moved and seconded it, and the outcome or vote." },
+  { title = "Reports received", guide = "Reports presented and by whom." },
+]
+
+[[style]]
+id = "investor"
+name = "Investor / board update"
+description = "Metrics, highlights, lowlights and asks, as discussed with investors or a board."
+actions = "Follow-ups"
+sections = [
+  { title = "Key metrics", guide = "Every number mentioned, with its period and trend." },
+  { title = "Highlights", guide = "What's going well." },
+  { title = "Lowlights", guide = "What isn't, and the plan." },
+  { title = "Investor feedback", guide = "Advice, concerns and questions from the investors." },
+  { title = "Asks", guide = "Intros, help or decisions requested, and responses." },
+]
+
+[[style]]
+id = "lecture"
+name = "Lecture / learning"
+description = "Talks, classes, demos and training: concepts, explanations, examples, questions."
+instructions = "Write study notes a student could review from. Explain concepts plainly."
+actions = ""
+sections = [
+  { title = "Key concepts", guide = "Each concept with a one or two sentence explanation, as \"Concept: explanation\"." },
+  { title = "Examples", guide = "Examples, demos and analogies used." },
+  { title = "Takeaways", guide = "The handful of things worth remembering." },
+  { title = "Questions to follow up", guide = "Questions asked, unanswered points, things to look up." },
+]
