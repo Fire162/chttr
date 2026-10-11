@@ -112,6 +112,14 @@ chttr dictionary                                     # show it all
 chttr forget sorob                                   # remove a word, mis-hearing or snippet
 ```
 
+Names come out of the recognizer a different way each time ("Sorob", "Sorov",
+"Suhrab" for Sohrab), so chttr also corrects words that *sound like* a
+vocabulary word: same consonant skeleton, capitalized by the recognizer (it
+took it for a name), not an English word, and spelled reasonably close. Real
+words like "sorry" or "Serbia" are left alone. In meetings, everyone on the
+invite and every name Meet's captions showed is corrected the same way. Turn it
+off with `sound_alikes = false` at the top of `dictionary.toml`.
+
 `~/.config/chttr/dictionary.toml` is re-read on every dictation. The `--heard`
 variants are replaced in the raw transcript (whole words, case-insensitive);
 the vocabulary is given to whisper as a prompt and to the cleanup model as

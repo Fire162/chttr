@@ -231,7 +231,7 @@ def _is_echo(mic: Utterance, them: list[Utterance]) -> bool:
     return matched / len(mw) >= ECHO_OVERLAP
 
 
-def _transcribe(utts: list[Utterance], audio: dict[str, np.ndarray], cfg: Config) -> None:
+def _transcribe(utts: list[Utterance], audio: dict[str, np.ndarray], cfg: Config, names: list[str]) -> None:
     from .dictionary import Dictionary
     from .transcriber import Transcriber, _clean
 
@@ -244,7 +244,7 @@ def _transcribe(utts: list[Utterance], audio: dict[str, np.ndarray], cfg: Config
         text = re.sub(r"\s+", " ", engine.recognize(seg, prompt)).strip()
         if engine.name == "whisper":
             text = _clean(text)
-        u.text = dictionary.apply(text) if text else ""
+        u.text = dictionary.apply(text, names) if text else ""
         if i and i % 50 == 0:
             log.info("transcribed %d/%d utterances (%.0fs)", i, len(utts), time.monotonic() - t0)
 
@@ -349,7 +349,6 @@ def _turns(utts: list[Utterance], gap: float = 3.0) -> list[tuple[str, float, st
 
 def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
     """Turn a recorded meeting into notes. Returns the Markdown file."""
-    from . import gcal
     from . import notes as N
 
     meta = update_meta(directory, status="processing", error="")
@@ -371,8 +370,16 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
     log.info("%d utterances (%d mic, %d them)", len(utts), sum(u.channel == "mic" for u in utts),
              sum(u.channel == "them" for u in utts))
 
+    # Names from the invite and the captions: misheard versions get corrected like dictionary words.
+    from . import gcal
+
+    urls = gcal.read_urls(cfg.meeting.calendar_file)
+    event = gcal.find_event(urls, meta.get("code", ""), datetime.fromtimestamp(started).astimezone()) if urls else None
+    names = sorted({part for full in [*(a.name for a in (event.attendees if event else [])),
+                                      *(str(e.get("name", "")) for e in events if e.get("type") == "speaking")]
+                    for part in full.split() if len(part) >= 3 and part.lower() not in SELF_CAPTION_NAMES})
     with D.timed("transcription"):
-        _transcribe(utts, audio, cfg)
+        _transcribe(utts, audio, cfg, names)
     utts = [u for u in utts if u.text]
     them = sorted((u for u in utts if u.channel == "them"), key=lambda u: u.start)
     mine = [u for u in utts if u.channel == "mic" and not _is_echo(u, them)]
@@ -382,8 +389,6 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
         centroids = _diarize(them, audio["them"], threads)
 
     # ---- who is who --------------------------------------------------------
-    urls = gcal.read_urls(cfg.meeting.calendar_file)
-    event = gcal.find_event(urls, meta.get("code", ""), datetime.fromtimestamp(started).astimezone()) if urls else None
     attendees = [a.to_dict() for a in event.attendees] if event else []
     me_att = next((a for a in attendees if a["is_me"]), None)
     me_name = cfg.meeting.me or (me_att["name"] if me_att and me_att["name"] else "") or "Me"
