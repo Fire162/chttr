@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import shutil
 import sys
 import time
 from collections.abc import Callable
@@ -279,6 +278,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ok = False
         print("daemon:      not running")
     print(f"modes:       {', '.join(m.name for m in cfg.modes) or '(none)'}")
+    from . import desktop as DT
+    from . import hotkeys as H
+
+    desk = DT.detect()
+    for line in DT.report(desk):
+        print(line)
+    hk = H.resolve(cfg.hotkeys.backend, desk.compositor)
+    hk_desc = {"compositor": "your compositor's bindings (chttr setup adds them)",
+               "portal": "the desktop's global-shortcuts portal",
+               "evdev": "keyboard devices (input group)",
+               "none": "PROBLEM: none; add yourself to the input group or bind chttr start/release yourself"}
+    print(f"hotkeys:     {hk_desc.get(hk, hk)}")
+    if hk == "none":
+        ok = False
     from .gcal import read_urls
     from .native_host import BROWSER_DIRS, HOST_NAME
 
@@ -528,18 +541,16 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 
 def _terminal(command: str) -> None:
-    import subprocess
+    from .desktop import open_terminal
 
-    launcher = shutil.which("omarchy-launch-floating-terminal-with-presentation")
-    cmd = [launcher, command] if launcher else ["xdg-terminal-exec", "bash", "-c", command + "; read -rp 'Press Enter'"]
-    subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    open_terminal(command)
 
 
 def _pick_style(directory: Path) -> None:
     """Style picker for one meeting; the rewrite runs in the background with a notification."""
     import subprocess
 
-    from .history import MENU
+    from . import desktop as DT
     from .meeting import read_json
     from .notes import load_styles
 
@@ -548,15 +559,13 @@ def _pick_style(directory: Path) -> None:
         or (read_json(directory / "meta.json", {}) or {}).get("style", "")
     rows = [f"{'󰄬' if s.id == current else '󰈙'}\t{s.name}\t{s.description}" for s in styles.values()]
     rows.append("󰏫\tCustom instructions…\tDescribe the notes you want, in your own words")
-    out = subprocess.run([MENU, "Notes style", *rows, "--", "--width", "760"], capture_output=True, text=True)
-    choice = out.stdout.strip().split("\t")[0]
+    picked = DT.menu("Notes style", rows, width=760)
+    choice = picked.split("\t")[1] if picked and "\t" in picked else ""
     if not choice:
         return
     cmd = [sys.argv[0], "meeting", "style", "--meeting", str(directory), "--notify"]
     if choice.startswith("Custom instructions"):
-        ask = subprocess.run(["omarchy-menu-input", "What should the notes focus on?", "--width", "640"],
-                             capture_output=True, text=True)
-        prompt = ask.stdout.strip()
+        prompt = DT.ask("What should the notes focus on?")
         if not prompt:
             return
         cmd += ["--prompt", prompt]
@@ -569,15 +578,11 @@ def _pick_style(directory: Path) -> None:
 
 
 def cmd_menu(args: argparse.Namespace) -> int:
-    """The bar widget's menu (Omarchy's menu picker)."""
+    """The bar widget's menu (Omarchy's menu picker, or fuzzel / wofi / rofi elsewhere)."""
     import subprocess
 
-    from .history import MENU
+    from . import desktop as DT
     from .meeting import meeting_dirs, read_json
-
-    if not shutil.which(MENU):
-        print(f"{MENU} not found", file=sys.stderr)
-        return 1
     try:
         status = send("meeting status")
     except DaemonNotRunning:
@@ -610,13 +615,15 @@ def cmd_menu(args: argparse.Namespace) -> int:
                                             subprocess.Popen(["xdg-open", str(meetings_dir)], start_new_session=True))),
         ("󰋚  Dictation history", lambda: subprocess.Popen([sys.argv[0], "history"], start_new_session=True)),
         ("󰄨  Stats", lambda: _terminal("chttr stats")),
-        ("󰒓  Edit settings", lambda: subprocess.Popen(["omarchy-launch-editor", str(C.CONFIG_FILE)], start_new_session=True)
-            if shutil.which("omarchy-launch-editor") else _terminal(f"${{EDITOR:-nano}} {C.CONFIG_FILE}")),
+        ("󰒓  Edit settings", lambda: DT.open_editor(str(C.CONFIG_FILE))),
         ("󰓦  Check setup (doctor)", lambda: _terminal("chttr doctor")),
         ("󰜉  Restart the daemon", lambda: subprocess.run(["systemctl", "--user", "restart", "chttr"])),
     ]
-    out = subprocess.run([MENU, "chttr", *[label for label, _ in items]], capture_output=True, text=True)
-    choice = out.stdout.strip()
+    try:
+        choice = DT.menu("chttr", [label for label, _ in items])
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     for label, action in items:
         if label == choice:
             action()

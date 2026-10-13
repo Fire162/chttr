@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 from collections import Counter
 from datetime import datetime, timedelta
 
 from .config import HISTORY_FILE
 
 TYPING_WPM = 40          # an average typist, for "time saved"
-MENU = "omarchy-menu-select"
 
 
 def load() -> list[dict]:
@@ -47,9 +44,9 @@ def _ago(when: datetime | None) -> str:
 
 
 def pick(entries: list[dict], limit: int = 50) -> str | None:
-    """Show the newest dictations in Omarchy's menu; return the chosen text."""
-    if not shutil.which(MENU):
-        raise SystemExit(f"{MENU} not found; use: chttr history --print")
+    """Show the newest dictations in the desktop's menu; return the chosen text."""
+    from . import desktop as DT
+
     recent = list(reversed(entries[-limit:]))
     options = []
     for i, e in enumerate(recent):
@@ -57,10 +54,11 @@ def pick(entries: list[dict], limit: int = 50) -> str | None:
         label = text if len(text) <= 90 else text[:89] + "…"
         sub = " · ".join(x for x in (f"#{i + 1}", _ago(_local(e.get("ts", ""))), e.get("app", "")) if x)
         options.append(f"{label}\t{sub}")
-    out = subprocess.run([MENU, "Dictation history", *options, "--", "--width", "720"],
-                         capture_output=True, text=True)
-    choice = out.stdout.strip()
-    if out.returncode != 0 or not choice:
+    try:
+        choice = DT.menu("Dictation history", options)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"{exc}; or use: chttr history --print") from None
+    if not choice:
         return None
     try:
         idx = int(choice.rsplit("\t", 1)[1].split(" ", 1)[0].lstrip("#")) - 1

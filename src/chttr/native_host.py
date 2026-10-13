@@ -22,12 +22,15 @@ from .client import DaemonNotRunning, send
 
 HOST_NAME = "com.chttr.meet"
 EXTENSION_DIR = Path(__file__).with_name("extension")
-BROWSERS = [               # (executable, config dir, flags file) of Chromium-family browsers
-    ("chromium", Path.home() / ".config/chromium", Path.home() / ".config/chromium-flags.conf"),
-    ("google-chrome-stable", Path.home() / ".config/google-chrome", Path.home() / ".config/chrome-flags.conf"),
-    ("brave", Path.home() / ".config/BraveSoftware/Brave-Browser", Path.home() / ".config/brave-flags.conf"),
+_C = Path.home() / ".config"
+BROWSERS = [               # (executables, config dir, flags file) of Chromium-family browsers
+    (("chromium", "chromium-browser"), _C / "chromium", _C / "chromium-flags.conf"),
+    (("google-chrome-stable", "google-chrome"), _C / "google-chrome", _C / "chrome-flags.conf"),
+    (("brave", "brave-browser"), _C / "BraveSoftware/Brave-Browser", _C / "brave-flags.conf"),
+    (("vivaldi", "vivaldi-stable"), _C / "vivaldi", _C / "vivaldi-stable.conf"),
+    (("microsoft-edge-stable", "microsoft-edge"), _C / "microsoft-edge", _C / "microsoft-edge-stable-flags.conf"),
 ]
-BROWSER_DIRS = [(d, f) for exe, d, f in BROWSERS if shutil.which(exe)]
+BROWSER_DIRS = [(d, f) for exes, d, f in BROWSERS if any(shutil.which(e) for e in exes)]
 
 
 def run() -> int:

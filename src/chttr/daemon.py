@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from datetime import UTC, datetime
@@ -21,7 +23,7 @@ from .config import Config, Mode
 from .dictionary import Dictionary
 from .feedback import Feedback
 from .meeting import Session, launch_processing
-from .output import deliver, focused_window, grab_selection
+from .output import current_desktop, deliver, focused_window, grab_selection
 from .recorder import Recorder
 from .streaming import Streamer
 from .transcriber import Transcriber, engine_key
@@ -33,9 +35,14 @@ IDLE, RECORDING, TRANSCRIBING = "idle", "recording", "transcribing"
 # HANDSFREE ends on silence or a second press.
 PTT, HANDSFREE, COMMAND = "dictate", "hands-free", "command"
 OVERLAY_SCRIPT = Path(__file__).with_name("overlay.py")
-SYSTEM_PYTHON = "/usr/bin/python3"      # has PyGObject + gtk4-layer-shell on Omarchy
+# The overlay runs under the distribution's Python, which has PyGObject (python-gobject /
+# python3-gi) and can see gtk4-layer-shell; chttr's own environment has neither.
+SYSTEM_PYTHON = "/usr/bin/python3" if Path("/usr/bin/python3").exists() else (shutil.which("python3") or "python3")
 # gtk4-layer-shell must be loaded before libwayland-client; with Python that means LD_PRELOAD.
-LAYER_SHELL_LIBS = [Path("/usr/lib/libgtk4-layer-shell.so"), Path("/usr/lib64/libgtk4-layer-shell.so")]
+LAYER_SHELL_LIBS = [Path(d) / name
+                    for d in ("/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu",
+                              "/usr/local/lib", "/usr/local/lib64")
+                    for name in ("libgtk4-layer-shell.so", "libgtk4-layer-shell.so.0")]
 QUIET_PEAK_DB = -45.0                   # below this the mic is probably not picking anything up
 CAPTION_INTERVAL = 0.8                  # seconds between live-caption passes
 CAPTION_WINDOW = 8.0                    # only the last this-many seconds are re-transcribed
@@ -79,6 +86,7 @@ class Daemon:
         self.job_seq = 0
         self.next_delivery = 0
         self.delivery = threading.Condition()
+        self.hotkeys = None
         self._stop = threading.Event()
         C.MEETING_STATE_FILE.unlink(missing_ok=True)
         self._write_state(IDLE)
@@ -113,6 +121,11 @@ class Daemon:
     # ---- overlay -----------------------------------------------------------
     def _overlay_open(self, label: str) -> None:
         if not self.cfg.feedback.overlay or self.overlay is not None:
+            return
+        desk = current_desktop()
+        if desk.compositor == "gnome" or not desk.wayland:
+            # GNOME (Mutter) and X11 have no layer-shell: a regular window would steal focus.
+            self._overlay_fail(f"no layer-shell on {desk.describe()}; notifications only")
             return
         env = dict(os.environ)
         for lib in LAYER_SHELL_LIBS:
@@ -416,10 +429,42 @@ class Daemon:
     def _press(self, kind: str) -> dict:
         """A key press. Reading the focused window and grabbing the selection talk to
         the compositor and the app, so they run without holding the lock."""
+        if not self._press_begin(kind):
+            return {"ok": True, "state": self.state, "message": "already recording"}
+        return self._press_finish(kind)
+
+    def _press_begin(self, kind: str) -> bool:
+        """Mark a recording as starting (instant). False if one is already going."""
         with self.lock:
             if self.recorder.active or self.starting:
-                return {"ok": True, "state": self.state, "message": "already recording"}
+                return False
             self.starting, self.release_requested, self.kind = True, False, kind
+            return True
+
+    def press_async(self, kind: str) -> None:
+        """A press from the in-daemon hotkeys: marked as started right away, so the
+        matching release (handled next, on the same thread) can't overtake it."""
+        if self._press_begin(kind):
+            threading.Thread(target=self._press_finish, args=(kind,), daemon=True).start()
+
+    def on_hotkey(self, action: str, pressed: bool) -> None:
+        """Key events from hotkeys.py (GNOME/KDE portal, or evdev)."""
+        if action in ("dictate", "command"):
+            if not pressed:
+                self.handle("release")
+            elif self.recorder.active and self.kind in (PTT, COMMAND):
+                self.handle("release")          # pressed again: a release got lost somewhere
+            else:
+                self.press_async(PTT if action == "dictate" else COMMAND)
+        elif pressed and action == "hands_free":
+            threading.Thread(target=self.handle, args=("toggle",), daemon=True).start()
+        elif pressed and action == "meeting":
+            threading.Thread(target=self.handle, args=("meeting toggle",), daemon=True).start()
+        elif pressed and action == "history":
+            subprocess.Popen([sys.executable, "-m", "chttr", "history"], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _press_finish(self, kind: str) -> dict:
         try:
             app, title = focused_window()
             selection = ""
@@ -655,6 +700,20 @@ class Daemon:
                         log.info("hands-free: nothing heard in %.0fs; cancelling", a.no_speech_timeout)
                         self._cancel()
 
+    def _start_hotkeys(self) -> None:
+        from . import hotkeys as H
+
+        try:
+            triggers = H.bindings(self.cfg.hotkeys)
+        except ValueError as exc:
+            log.warning("hotkeys: %s", exc)
+            self.feedback.notify("chttr: bad hotkey in config.toml", str(exc), urgency="normal", timeout_ms=8000)
+            return
+        backend = H.resolve(self.cfg.hotkeys.backend, current_desktop().compositor)
+        log.info("hotkeys: %s", {"compositor": "bound by the compositor", "none": "none (see chttr doctor)"}
+                 .get(backend, backend))
+        self.hotkeys = H.Hotkeys(backend, triggers, self.on_hotkey).start()
+
     def _serve_one(self, conn: socket.socket) -> None:
         with conn:
             try:
@@ -702,6 +761,7 @@ class Daemon:
         signal.signal(signal.SIGINT, on_signal)
         threading.Thread(target=self._watchdog, daemon=True).start()
         threading.Thread(target=P.warm, args=(self.cfg.polish,), daemon=True).start()
+        self._start_hotkeys()
         log.info("listening on %s (cleanup backend: %s)", sock_path, P.backend(self.cfg.polish))
         try:
             while not self._stop.is_set():
