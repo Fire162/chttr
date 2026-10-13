@@ -51,6 +51,7 @@ QUIET_PEAK_DB = -45.0                   # below this the mic is probably not pic
 CAPTION_INTERVAL = 0.8                  # seconds between live-caption passes
 CAPTION_WINDOW = 8.0                    # only the last this-many seconds are re-transcribed
 DOUBLE_TAP = 0.45                       # a second press this soon after a short tap: hands-free
+ATSPI_GIVE_UP = 5                       # unreadable fields in a row before screen context stops
 TAP = 0.35                              # recordings shorter than this are taps, not dictations
 CALL_TIMEOUT = 90                       # no word from the Meet tab for this long: the call is over
 
@@ -94,6 +95,7 @@ class Daemon:
         self.delivery = threading.Condition()
         self.hotkeys = None
         self.last_tap = 0.0
+        self.atspi_misses = 0
         self.field: Future | None = None             # the focused text field, read at key press
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chttr-context")
         self.offered: set[tuple[str, str]] = set()   # corrections already offered this session
@@ -568,8 +570,9 @@ class Daemon:
 
     def _start(self, kind: str, app: str, title: str, selection: str) -> dict:
         self.kind = kind
-        want_field = self.cfg.polish.screen_context != "off" or self.cfg.history.learn_from_edits
-        self.field = self.pool.submit(CX.read_field, SYSTEM_PYTHON) if want_field and kind != COMMAND else None
+        want_field = (self.cfg.polish.screen_context != "off" or self.cfg.history.learn_from_edits) \
+            and self.atspi_misses < ATSPI_GIVE_UP
+        self.field = self.pool.submit(self._read_field) if want_field and kind != COMMAND else None
         self.app, self.title, self.selection = app, title, selection
         self.heard_speech = False
         self.last_speech = time.monotonic()
@@ -709,12 +712,25 @@ class Daemon:
             if raw and self.cfg.history.enabled:
                 self._append_history(raw, text, app, secs, method, kind, mode.name if mode else "", audio)
 
+    def _read_field(self) -> CX.Field | None:
+        """The focused text field. If the accessibility bus never answers (it isn't
+        running on every desktop), stop asking after a few tries this session."""
+        field = CX.read_field(SYSTEM_PYTHON)
+        if field is None:
+            self.atspi_misses += 1
+            if self.atspi_misses == ATSPI_GIVE_UP:
+                log.info("no text field readable through AT-SPI %d times; screen context off until restart",
+                         ATSPI_GIVE_UP)
+        else:
+            self.atspi_misses = 0
+        return field
+
     @staticmethod
     def _field(future: Future | None) -> CX.Field | None:
         if future is None:
             return None
         try:
-            return future.result(timeout=0.5)       # usually done long before the key is released
+            return future.result(timeout=0.2)       # usually done long before the key is released
         except Exception:  # noqa: BLE001 - screen context is optional
             return None
 
