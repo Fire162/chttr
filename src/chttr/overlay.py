@@ -18,7 +18,8 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
+from gi.repository import GLib, Gtk
+from gi.repository import Gtk4LayerShell as LayerShell
 
 BARS = 28
 W, H = 320, 72

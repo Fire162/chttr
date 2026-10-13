@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import CONFIG_DIR, PolishCfg
-from .polish import _api_key, _claude_configured
+from .polish import _claude_configured
+from .polish import client as polish_client
 
 log = logging.getLogger("chttr.notes")
 
@@ -129,9 +130,7 @@ def available(cfg: PolishCfg) -> bool:
 
 
 def _client(cfg: PolishCfg):
-    import anthropic
-
-    return anthropic.Anthropic(api_key=_api_key(cfg), timeout=600, max_retries=2)
+    return polish_client(cfg, timeout=600, max_retries=2)
 
 
 def _call(cfg: PolishCfg, effort: str, schema: dict, content: list[dict], max_tokens: int = 32000,
@@ -141,9 +140,9 @@ def _call(cfg: PolishCfg, effort: str, schema: dict, content: list[dict], max_to
         max_tokens=max_tokens,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
-        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
+        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},  # pyright: ignore[reportArgumentType]
         system=system,
-        messages=[{"role": "user", "content": content}],
+        messages=[{"role": "user", "content": content}],  # pyright: ignore[reportArgumentType]
     ) as stream:
         response = stream.get_final_message()
     if response.stop_reason == "refusal":

@@ -1,23 +1,46 @@
 [project]
 name = "chttr"
-version = "0.2.1"
-description = "Voice dictation and meeting transcripts for Omarchy / Hyprland"
+version = "0.4.0"
+description = "Voice dictation and meeting notes for Linux: local speech-to-text, Claude cleanup, speaker-named transcripts"
 authors = [
     { name = "Rob Behbahani" }
 ]
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
+keywords = ["dictation", "speech-to-text", "voice", "wayland", "hyprland", "omarchy", "meeting-notes", "parakeet"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
 dependencies = [
     "anthropic>=1.13.0",
     "icalendar>=7.3.0",
     "onnx-asr[cpu]>=0.12.0",
-    "pywhispercpp>=1.5.1",
     "recurring-ical-events>=3.8.2",
+]
+
+[project.optional-dependencies]
+# whisper.cpp engine ([engine] name = "whisper"); Parakeet is the default and needs nothing extra
+whisper = ["pywhispercpp>=1.5.1"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.13",
+    "pyright>=1.1.405",
 ]
 
 [project.urls]
 Homepage = "https://github.com/robjobbed/chttr"
+Issues = "https://github.com/robjobbed/chttr/issues"
+Changelog = "https://github.com/robjobbed/chttr/blob/main/CHANGELOG.md"
 
 [project.scripts]
 chttr = "chttr:main"
@@ -25,3 +48,40 @@ chttr = "chttr:main"
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "BLE", "SIM", "RUF"]
+ignore = [
+    "E501",     # long lines are fine where they read better
+    "SIM105",   # try/except/pass is clearer than contextlib.suppress here
+    "RUF001",   # typographic characters in user-facing strings are deliberate
+    "RUF002",
+    "RUF003",
+    "RUF005",   # [*a, *b] is not clearer than a + b
+    "SIM108",   # if/else blocks over ternaries where the branches are long
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "BLE"]
+"src/chttr/overlay.py" = ["E402"]   # gi.require_version must run before the gi.repository import
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "model: needs the speech models downloaded (slow; run with -m model)",
+    "real_minimum: streaming test that keeps the default segment length",
+]
+addopts = "-m 'not model'"
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingImports = "none"
+reportMissingModuleSource = "none"
+reportAttributeAccessIssue = "none"
+reportOptionalMemberAccess = "none"

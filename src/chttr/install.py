@@ -12,13 +12,11 @@ from __future__ import annotations
 import shutil
 import subprocess
 import time
-import urllib.request
 from pathlib import Path
 
 from . import config as C
+from . import models as M
 
-PARAKEET_URL = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/"
-PARAKEET_FILES = ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt", "config.json"]
 UNIT = Path.home() / ".config/systemd/user/chttr.service"
 HYPR = Path.home() / ".config/hypr"
 
@@ -66,23 +64,6 @@ def _say(msg: str) -> None:
     print(f"  {msg}", flush=True)
 
 
-def _download(url: str, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".part")
-    with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as fh:
-        total = int(r.headers.get("Content-Length") or 0)
-        done, last = 0, 0.0
-        while chunk := r.read(1 << 20):
-            fh.write(chunk)
-            done += len(chunk)
-            if total and time.monotonic() - last > 1:
-                last = time.monotonic()
-                print(f"\r    {path.name}: {done * 100 // total}% of {total >> 20} MB", end="", flush=True)
-    if total:
-        print(f"\r    {path.name}: done ({total >> 20} MB)          ", flush=True)
-    tmp.rename(path)
-
-
 def models() -> None:
     from . import diarize
     from .transcriber import resolve_parakeet
@@ -91,10 +72,9 @@ def models() -> None:
         _say(f"speech model: Parakeet in {resolve_parakeet('')}")
     except FileNotFoundError:
         target = C.PARAKEET_SEARCH_DIRS[-1]
-        _say(f"speech model: downloading Parakeet TDT 0.6B v3 (int8, ~670 MB) to {target}")
-        for name in PARAKEET_FILES:
-            if not (target / name).exists():
-                _download(PARAKEET_URL + name, target / name)
+        _say(f"speech model: downloading Parakeet TDT 0.6B v3 (int8, ~670 MB, checksum-verified) to {target}")
+        for spec in M.PARAKEET:
+            M.download(spec, target / spec.name, M.console_progress(spec.name))
     _say("meeting models: voice activity + speaker embeddings (~29 MB)")
     diarize.ensure_models()
 
@@ -104,7 +84,7 @@ def _comment_out_autostart(exe: str) -> None:
         path = HYPR / name
         if not path.exists():
             continue
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         changed = False
         for i, line in enumerate(lines):
             s = line.strip()
@@ -113,13 +93,13 @@ def _comment_out_autostart(exe: str) -> None:
                 changed = True
         if changed:
             shutil.copy2(path, path.with_name(path.name + ".bak-chttr"))
-            path.write_text("\n".join(lines) + "\n")
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             _say(f"commented out the old chttr daemon line in {path}")
 
 
 def service(exe: str) -> None:
     UNIT.parent.mkdir(parents=True, exist_ok=True)
-    UNIT.write_text(UNIT_TEXT.format(exe=exe))
+    UNIT.write_text(UNIT_TEXT.format(exe=exe), encoding="utf-8")
     _comment_out_autostart(exe)
     if C.SOCKET_PATH.exists():
         subprocess.run([exe, "quit"], capture_output=True, check=False)     # a daemon started some other way
@@ -136,12 +116,12 @@ def keybindings(exe: str) -> None:
     if target is None:
         _say("keybindings: no ~/.config/hypr/bindings.lua or bindings.conf; see the README to add them")
         return
-    text = target.read_text()
+    text = target.read_text(encoding="utf-8")
     if "chttr" in text:
         _say(f"keybindings: {target} already has chttr bindings; left alone")
         return
     shutil.copy2(target, target.with_name(target.name + ".bak-chttr"))
-    target.write_text(text.rstrip("\n") + "\n" + block.format(exe=exe))
+    target.write_text(text.rstrip("\n") + "\n" + block.format(exe=exe), encoding="utf-8")
     subprocess.run(["hyprctl", "reload"], capture_output=True, check=False)
     _say(f"keybindings: added to {target} (Insert, Alt/Super+Insert, Super+Alt+Insert)")
 

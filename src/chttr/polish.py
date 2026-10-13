@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -69,7 +71,7 @@ def _api_key(cfg: PolishCfg) -> str | None:
         return None
     path = Path(cfg.api_key_file).expanduser()
     if path.is_file():
-        key = path.read_text().strip()
+        key = path.read_text(encoding="utf-8").strip()
         if key:
             return key
     return None
@@ -100,23 +102,68 @@ def backend(cfg: PolishCfg) -> str:
 
 # ---- completion -----------------------------------------------------------
 
-def _claude(system: str, user: str, cfg: PolishCfg) -> str | None:
+_clients: dict[tuple, object] = {}
+_clients_lock = threading.Lock()
+
+
+def client(cfg: PolishCfg, timeout: float | None = None, max_retries: int = 1):
+    """One Anthropic client per key/timeout, kept for the daemon's lifetime: its HTTP
+    connection pool stays warm, so a dictation doesn't pay a new TLS handshake."""
     import anthropic
 
-    client = anthropic.Anthropic(api_key=_api_key(cfg), timeout=cfg.timeout_seconds, max_retries=1)
-    response = client.beta.messages.create(
-        model=cfg.model,
-        max_tokens=4096,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        output_config={"effort": cfg.effort},
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
+    key = (_api_key(cfg), timeout or cfg.timeout_seconds, max_retries)
+    with _clients_lock:
+        if key not in _clients:
+            _clients[key] = anthropic.Anthropic(api_key=key[0], timeout=key[1], max_retries=max_retries)
+        return _clients[key]
+
+
+def _is_haiku(model: str) -> bool:
+    return "haiku" in model
+
+
+def claude_request(model: str, effort: str, system: str, user: str) -> dict:
+    """Request parameters for a short, latency-sensitive completion. The system prompt
+    is marked for caching (it is identical on every dictation). Haiku runs with
+    thinking off at the configured effort; Opus/Sonnet-class models keep server-side
+    refusal fallbacks, which Haiku doesn't offer."""
+    params: dict = {
+        "model": model,
+        "max_tokens": 4096,
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": user}],
+        "output_config": {"effort": effort},
+    }
+    if _is_haiku(model):
+        if effort in ("low", "medium", "high"):
+            params["thinking"] = {"type": "disabled"}
+    else:
+        params["betas"] = ["server-side-fallback-2026-07-01"]
+        params["fallbacks"] = "default"
+    return params
+
+
+def _claude(system: str, user: str, cfg: PolishCfg) -> str | None:
+    params = claude_request(cfg.cleanup_model or cfg.model, cfg.effort, system, user)
+    c = client(cfg)
+    response = c.beta.messages.create(**params) if "betas" in params else c.messages.create(**params)  # type: ignore[attr-defined]
     if response.stop_reason == "refusal":
         log.warning("refused (%s)", getattr(response.stop_details, "category", None))
         return None
+    u = response.usage
+    log.debug("cleanup tokens: %d in (%d cached) / %d out", u.input_tokens,
+              getattr(u, "cache_read_input_tokens", 0) or 0, u.output_tokens)
     return "".join(b.text for b in response.content if b.type == "text").strip()
+
+
+def warm(cfg: PolishCfg) -> None:
+    """Open the connection to the API ahead of the first dictation (best effort)."""
+    if backend(cfg) != "claude":
+        return
+    try:
+        client(cfg).models.retrieve(cfg.cleanup_model or cfg.model)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001 - only a warm-up
+        log.debug("API warm-up failed: %s", exc)
 
 
 def _ollama(system: str, user: str, cfg: PolishCfg) -> str | None:
@@ -144,13 +191,34 @@ def _complete(system: str, user: str, cfg: PolishCfg) -> str | None:
 
 def _context(cfg: PolishCfg, app: str, title: str, style: str, vocabulary: list[str] | None) -> str:
     context = ""
-    if cfg.use_app_context and (app or title):
-        context += f"<focused_app>{app}</focused_app>\n<window_title>{title[:120]}</window_title>\n"
+    if cfg.use_app_context and app:
+        context += f"<focused_app>{app}</focused_app>\n"
+    if cfg.use_app_context and cfg.send_window_title and title:
+        context += f"<window_title>{title[:120]}</window_title>\n"
     if style:
         context += f"<style>{style}</style>\n"
     if vocabulary:
         context += "<vocabulary>" + ", ".join(vocabulary) + "</vocabulary>\n"
     return context
+
+
+# ---- quick path -------------------------------------------------------------
+
+# Anything a model would have to act on: fillers, self-corrections, spoken
+# formatting, snippets' trigger verbs.
+_NEEDS_MODEL = re.compile(
+    r"\b(um+|uh+|erm|hmm+|like|you know|i mean|sort of|kind of|actually|scratch that|delete that|no wait|"
+    r"wait no|comma|period|full stop|question mark|exclamation (?:mark|point)|new ?line|new paragraph|"
+    r"bullet(?: point)?|open quote|close quote|colon|semicolon|dash|hyphen|insert|paste)\b",
+    re.IGNORECASE,
+)
+_STUTTER = re.compile(r"\b(\w+)\s+\1\b", re.IGNORECASE)
+
+
+def quick_path(text: str, max_words: int) -> bool:
+    """True when a short phrase needs no model: it would come back unchanged."""
+    words = text.split()
+    return 0 < len(words) <= max_words and not _NEEDS_MODEL.search(text) and not _STUTTER.search(text)
 
 
 # ---- public ---------------------------------------------------------------

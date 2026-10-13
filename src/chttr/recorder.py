@@ -7,7 +7,7 @@ import signal
 import subprocess
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -24,6 +24,7 @@ class Recorder:
         self.on_level = on_level
         self._proc: subprocess.Popen | None = None
         self._chunks: list[bytes] = []
+        self.levels_db: list[float] = []     # RMS level of every 20 ms chunk, for pause detection
         self._reader: threading.Thread | None = None
         self._started = 0.0
         self.peak_db = -90.0
@@ -48,6 +49,7 @@ class Recorder:
             cmd += ["--target", self.device]
         cmd.append("-")
         self._chunks = []
+        self.levels_db = []
         self.peak_db = -90.0
         self._proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self._started = time.monotonic()
@@ -65,17 +67,27 @@ class Recorder:
             data = proc.stdout.read(CHUNK_BYTES)
             if not data:
                 break
+            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(samples * samples))) if len(samples) else 0.0
+            # level before the chunk itself, so a reader never sees audio without its level
+            self.levels_db.append(20 * math.log10(max(rms, 1e-6)))
             self._chunks.append(data)
+            peak = float(np.abs(samples).max()) if len(samples) else 0.0
+            peak_db = 20 * math.log10(max(peak, 1e-6))
+            self.peak_db = max(self.peak_db, peak_db)
             if self.on_level:
-                samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-                rms = float(np.sqrt(np.mean(samples * samples))) if len(samples) else 0.0
-                peak = float(np.abs(samples).max()) if len(samples) else 0.0
-                peak_db = 20 * math.log10(max(peak, 1e-6))
-                self.peak_db = max(self.peak_db, peak_db)
                 try:
                     self.on_level(rms, peak_db)
                 except Exception:  # noqa: BLE001 - metering must never break recording
                     pass
+
+    @property
+    def chunk_count(self) -> int:
+        return len(self._chunks)
+
+    def audio_range(self, start: int, end: int) -> np.ndarray:
+        """Chunks [start, end) of the recording so far, as float32."""
+        return np.frombuffer(b"".join(self._chunks[start:end]), dtype=np.int16).astype(np.float32) / 32768.0
 
     def snapshot(self, max_seconds: float = 0) -> np.ndarray:
         """The audio recorded so far (the last max_seconds of it, if given), without stopping."""

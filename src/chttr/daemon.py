@@ -10,7 +10,7 @@ import socket
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +23,7 @@ from .feedback import Feedback
 from .meeting import Session, launch_processing
 from .output import deliver, focused_window, grab_selection
 from .recorder import Recorder
+from .streaming import Streamer
 from .transcriber import Transcriber, engine_key
 
 log = logging.getLogger("chttr.daemon")
@@ -63,19 +64,50 @@ class Daemon:
         self.last_speech = 0.0
         self.captions_stop: threading.Event | None = None
         self.captions_thread: threading.Thread | None = None
+        self.streamer: Streamer | None = None
         # meetings
         self.meeting: Session | None = None
         self.call: dict | None = None           # the Meet call the extension says we're in
         self.dictation_started = 0.0
+        # A key press reads the focused window (and the selection, in command mode)
+        # outside the lock; a release that arrives meanwhile is remembered here.
+        self.starting = False
+        self.release_requested = False
+        # Dictations still being transcribed / cleaned up. A new recording may start
+        # while earlier ones finish; their text is typed strictly in order.
+        self.jobs = 0
+        self.job_seq = 0
+        self.next_delivery = 0
+        self.delivery = threading.Condition()
         self._stop = threading.Event()
         C.MEETING_STATE_FILE.unlink(missing_ok=True)
         self._write_state(IDLE)
+        self._tighten_permissions()
+
+    def _tighten_permissions(self) -> None:
+        """Files written by versions before 0.3 were created with the default umask."""
+        C.ensure_data_dir()
+        for path in (C.DATA_DIR, C.MEETINGS_DATA_DIR, C.HISTORY_FILE, C.VOICES_FILE):
+            try:
+                if path.exists() and C.too_open(path):
+                    path.chmod(0o700 if path.is_dir() else 0o600)
+            except OSError as exc:
+                log.debug("could not tighten %s: %s", path, exc)
 
     # ---- state -------------------------------------------------------------
+    def _refresh_state(self) -> None:
+        """Recording beats transcribing beats idle."""
+        if self.recorder.active:
+            state = RECORDING
+        else:
+            state = TRANSCRIBING if self.jobs else IDLE
+        if state != self.state:
+            self._write_state(state)
+
     def _write_state(self, state: str) -> None:
         self.state = state
         tmp = C.STATE_FILE.with_suffix(".tmp")
-        tmp.write_text(state)
+        tmp.write_text(state, encoding="utf-8")
         os.replace(tmp, C.STATE_FILE)
 
     # ---- overlay -----------------------------------------------------------
@@ -134,9 +166,18 @@ class Daemon:
         except (OSError, subprocess.TimeoutExpired):
             proc.kill()
 
-    # ---- live captions -----------------------------------------------------
+    # ---- streaming recognition / live captions ----------------------------
     def _captions_start(self) -> None:
-        if not (self.cfg.feedback.live_captions and self.cfg.feedback.overlay):
+        captions = self.cfg.feedback.live_captions and self.cfg.feedback.overlay
+        if self.cfg.engine.streaming:
+            prompt = Dictionary.load().whisper_prompt()
+            self.streamer = Streamer(
+                self.recorder, lambda audio: self.transcriber.transcribe(audio, prompt),
+                self.cfg.audio.speech_threshold_db,
+                on_caption=(lambda text: self._overlay_send("caption " + text)) if captions else None,
+            ).start()
+            return
+        if not captions:
             return
         self.captions_stop = threading.Event()
         self.captions_thread = threading.Thread(target=self._captions_loop, args=(self.captions_stop,), daemon=True)
@@ -157,8 +198,12 @@ class Daemon:
             if not stop.is_set() and text:
                 self._overlay_send("caption " + text)
 
-    def _captions_detach(self) -> threading.Thread | None:
-        """Tell this recording's caption loop to stop; returns its thread to join."""
+    def _captions_detach(self) -> threading.Thread | Streamer | None:
+        """Tell this recording's caption loop to stop; returns its thread to join (or
+        the streamer that has already recognized part of the recording)."""
+        if self.streamer is not None:
+            streamer, self.streamer = self.streamer, None
+            return streamer
         stop, thread = self.captions_stop, self.captions_thread
         self.captions_stop = self.captions_thread = None
         if stop:
@@ -188,6 +233,8 @@ class Daemon:
     def handle(self, line: str) -> dict:
         verb, _, arg = line.strip().partition(" ")
         cmd = verb.lower()
+        if cmd in ("start", "command") or (cmd == "toggle" and not self.recorder.active and not self.starting):
+            return self._press({"start": PTT, "command": COMMAND, "toggle": HANDSFREE}[cmd])
         with self.lock:
             if cmd == "meeting":
                 return self._meeting_command(arg.strip().lower())
@@ -197,14 +244,14 @@ class Daemon:
                 return {"ok": True, "state": self.state, "kind": self.kind if self.state == RECORDING else "",
                         "seconds": round(self.recorder.elapsed, 1)}
             if cmd == "toggle":
-                return self._stop_and_transcribe() if self.state == RECORDING else self._start(HANDSFREE)
-            if cmd == "start":
-                return self._start(PTT)
-            if cmd == "command":
-                return self._start(COMMAND)
+                return self._stop_and_transcribe()
             if cmd == "release":
                 # Key-up of any Insert binding. Hands-free recordings ignore it, so
                 # letting go of Super+Insert in either order doesn't end them.
+                if self.starting:
+                    if self.kind != HANDSFREE:
+                        self.release_requested = True
+                    return {"ok": True, "state": self.state, "message": "released while starting; will stop"}
                 if self.state == RECORDING and self.kind == HANDSFREE:
                     return {"ok": True, "state": self.state, "message": "hands-free; ignoring key release"}
                 return self._stop_and_transcribe()
@@ -265,7 +312,7 @@ class Daemon:
             self.feedback.notify("chttr: can't record the meeting", str(exc), urgency="critical", timeout_ms=8000)
             return {"ok": False, "state": self.state, "error": str(exc)}
         self.meeting = session
-        C.MEETING_STATE_FILE.write_text(json.dumps({"title": title, "code": code, "started": session.recorder.started}))
+        C.MEETING_STATE_FILE.write_text(json.dumps({"title": title, "code": code, "started": session.recorder.started}), encoding="utf-8")
         log.info("meeting recording started in %s", session.dir)
         self.feedback.play("start")
         self.feedback.notify("Recording meeting" + (f": {title}" if title else ""),
@@ -366,17 +413,34 @@ class Daemon:
         self.feedback.cfg = cfg.feedback
         return {"ok": True, "state": self.state, "message": message}
 
-    def _start(self, kind: str) -> dict:
-        if self.state == RECORDING:
-            return {"ok": True, "state": self.state, "message": "already recording"}
-        if self.state == TRANSCRIBING:
-            return {"ok": False, "state": self.state, "error": "busy transcribing"}
+    def _press(self, kind: str) -> dict:
+        """A key press. Reading the focused window and grabbing the selection talk to
+        the compositor and the app, so they run without holding the lock."""
+        with self.lock:
+            if self.recorder.active or self.starting:
+                return {"ok": True, "state": self.state, "message": "already recording"}
+            self.starting, self.release_requested, self.kind = True, False, kind
+        try:
+            app, title = focused_window()
+            selection = ""
+            if kind == COMMAND:
+                mode = self.cfg.mode_for(app)
+                selection = grab_selection(terminal=bool(mode and mode.name == "terminal")).strip()
+        except Exception:
+            log.exception("reading the focused window failed")
+            app, title, selection = "", "", ""
+        with self.lock:
+            self.starting = False
+            reply = self._start(kind, app, title, selection)
+            if self.release_requested and self.recorder.active:
+                self.release_requested = False
+                log.info("key released before recording started; stopping right away")
+                return self._stop_and_transcribe()
+            return reply
+
+    def _start(self, kind: str, app: str, title: str, selection: str) -> dict:
         self.kind = kind
-        self.app, self.title = focused_window()
-        self.selection = ""
-        if kind == COMMAND:
-            mode = self.cfg.mode_for(self.app)
-            self.selection = grab_selection(terminal=bool(mode and mode.name == "terminal")).strip()
+        self.app, self.title, self.selection = app, title, selection
         self.heard_speech = False
         self.last_speech = time.monotonic()
         self._unmute_if_needed()
@@ -386,6 +450,7 @@ class Daemon:
         except RuntimeError as exc:
             self._overlay_close()
             self._restore_mute_state()
+            self._refresh_state()
             self.feedback.play("error")
             self.feedback.notify("chttr: can't record", str(exc), urgency="critical", timeout_ms=6000)
             return {"ok": False, "state": self.state, "error": str(exc)}
@@ -404,13 +469,15 @@ class Daemon:
         audio, secs = self.recorder.stop()
         peak_db = self.recorder.peak_db
         self._log_dictation()
+        self.jobs += 1
+        seq, self.job_seq = self.job_seq, self.job_seq + 1
         self._write_state(TRANSCRIBING)
         captions = self._captions_detach()
         self._overlay_close()
         self._restore_mute_state()
         self.feedback.play("stop")
         self.feedback.notify("Transcribing…", f"{secs:.1f}s of audio, peak {peak_db:.0f} dB", timeout_ms=0)
-        job = (audio, secs, peak_db, self.kind, self.app, self.title, self.selection, captions)
+        job = (seq, audio, secs, peak_db, self.kind, self.app, self.title, self.selection, captions)
         threading.Thread(target=self._process, args=job, daemon=True).start()
         return {"ok": True, "state": self.state, "seconds": round(secs, 1), "peak_db": round(peak_db, 1)}
 
@@ -421,25 +488,44 @@ class Daemon:
         self._log_dictation()
         self._overlay_close()
         self._restore_mute_state()
-        self._write_state(IDLE)
-        self._captions_detach()
+        self._refresh_state()
+        detached = self._captions_detach()
+        if isinstance(detached, Streamer):
+            detached.abort()
         self.feedback.play("error")
         self.feedback.notify("Dictation cancelled", timeout_ms=1500)
         return {"ok": True, "state": self.state}
 
     # ---- pipeline (worker thread) -----------------------------------------
-    def _process(self, audio: np.ndarray, secs: float, peak_db: float, kind: str,
-                 app: str, title: str, selection: str, captions: threading.Thread | None) -> None:
+    def _wait_turn(self, seq: int) -> None:
+        """Block until every earlier dictation has been delivered (or given up)."""
+        with self.delivery:
+            self.delivery.wait_for(lambda: self.next_delivery >= seq, timeout=60)
+
+    def _done_turn(self, seq: int) -> None:
+        with self.delivery:
+            self.next_delivery = max(self.next_delivery, seq + 1)
+            self.delivery.notify_all()
+
+    def _process(self, seq: int, audio: np.ndarray, secs: float, peak_db: float, kind: str,
+                 app: str, title: str, selection: str, captions: threading.Thread | Streamer | None) -> None:
         raw = text = ""
         method = ""
         mode: Mode | None = None
         try:
-            if captions:
-                captions.join(timeout=5)   # let an in-flight caption pass finish first
             t0 = time.monotonic()
             dictionary = Dictionary.load()
-            raw = self.transcriber.transcribe(audio, dictionary.whisper_prompt())
-            log.info("%s %.1fs audio (peak %.0f dB) -> %.2fs: %r",
+            if isinstance(captions, Streamer):
+                try:
+                    raw = captions.finish(audio)
+                except Exception:  # fall back to one pass over everything
+                    log.exception("streaming recognition failed; transcribing the whole recording")
+                    raw = self.transcriber.transcribe(audio, dictionary.whisper_prompt())
+            else:
+                if captions:
+                    captions.join(timeout=5)   # let an in-flight caption pass finish first
+                raw = self.transcriber.transcribe(audio, dictionary.whisper_prompt())
+            log.info("%s %.1fs audio (peak %.0f dB) -> %.2fs after release: %r",
                      self.transcriber.engine.name, secs, peak_db, time.monotonic() - t0, raw)
             if not raw:
                 self._no_speech(secs, peak_db)
@@ -455,21 +541,25 @@ class Daemon:
             else:
                 text = self._polish(fixed, app, title, mode, dictionary)
                 text = dictionary.expand_snippets(text)
+            self._wait_turn(seq)
             method = deliver(text, self.cfg.output,
                              mode=(mode.output if mode else ""),
-                             trailing_space=False if kind == COMMAND else (mode.trailing_space if mode else None))
+                             trailing_space=False if kind == COMMAND else (mode.trailing_space if mode else None),
+                             allow_paste=not (mode and mode.name == "terminal"))
             label = "Replaced" if kind == COMMAND and selection else "Typed"
             if method == "clipboard":
                 self.feedback.notify("Copied to clipboard", text[:200], timeout_ms=4000)
             else:
                 self.feedback.notify(label, text[:200], timeout_ms=2500)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("dictation failed")
             self.feedback.play("error")
             self.feedback.notify("chttr error", f"{type(exc).__name__}: {exc}", urgency="critical", timeout_ms=8000)
         finally:
+            self._done_turn(seq)
             with self.lock:
-                self._write_state(IDLE)
+                self.jobs -= 1
+                self._refresh_state()
             if raw and self.cfg.history.enabled:
                 self._append_history(raw, text, app, secs, method, kind, mode.name if mode else "")
 
@@ -483,6 +573,12 @@ class Daemon:
 
     def _polish(self, text: str, app: str, title: str, mode: Mode | None, dictionary: Dictionary) -> str:
         if mode and not mode.polish:
+            return text
+        if P.quick_path(text, self.cfg.polish.quick_max_words):
+            # Nothing for a model to fix. Terminals and editors still get no trailing period.
+            if mode and mode.trailing_space is False and text.endswith(".") and not text.endswith(".."):
+                text = text[:-1]
+            log.info("short and clean; typed without a model round trip")
             return text
         if P.backend(self.cfg.polish) == "none":
             return text
@@ -522,10 +618,10 @@ class Daemon:
 
     def _append_history(self, raw: str, text: str, app: str, secs: float, method: str, kind: str, mode_name: str) -> None:
         try:
-            C.DATA_DIR.mkdir(parents=True, exist_ok=True)
-            with C.HISTORY_FILE.open("a") as fh:
+            C.ensure_data_dir()
+            with C.open_private(C.HISTORY_FILE) as fh:
                 fh.write(json.dumps({
-                    "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "ts": datetime.now(UTC).isoformat(timespec="seconds"),
                     "seconds": round(secs, 1), "app": app, "kind": kind, "mode": mode_name,
                     "raw": raw, "text": text, "output": method,
                 }) + "\n")
@@ -559,6 +655,25 @@ class Daemon:
                         log.info("hands-free: nothing heard in %.0fs; cancelling", a.no_speech_timeout)
                         self._cancel()
 
+    def _serve_one(self, conn: socket.socket) -> None:
+        with conn:
+            try:
+                conn.settimeout(2)
+                buf = b""
+                while not buf.endswith(b"\n"):
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+                reply = self.handle(buf.decode(errors="replace"))
+            except Exception as exc:
+                log.exception("request failed")
+                reply = {"ok": False, "state": self.state, "error": str(exc)}
+            try:
+                conn.sendall((json.dumps(reply) + "\n").encode())
+            except OSError:
+                pass
+
     def serve(self) -> None:
         sock_path = C.SOCKET_PATH
         if sock_path.exists():
@@ -568,7 +683,7 @@ class Daemon:
                 probe.connect(str(sock_path))
                 probe.sendall(b"status\n")
                 raise SystemExit("chttr daemon is already running")
-            except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
+            except (ConnectionRefusedError, FileNotFoundError, TimeoutError):
                 sock_path.unlink(missing_ok=True)
             finally:
                 probe.close()
@@ -586,30 +701,17 @@ class Daemon:
         signal.signal(signal.SIGTERM, on_signal)
         signal.signal(signal.SIGINT, on_signal)
         threading.Thread(target=self._watchdog, daemon=True).start()
+        threading.Thread(target=P.warm, args=(self.cfg.polish,), daemon=True).start()
         log.info("listening on %s (cleanup backend: %s)", sock_path, P.backend(self.cfg.polish))
         try:
             while not self._stop.is_set():
                 try:
                     conn, _ = server.accept()
-                except socket.timeout:
+                except TimeoutError:
                     continue
-                with conn:
-                    try:
-                        conn.settimeout(2)
-                        buf = b""
-                        while not buf.endswith(b"\n"):
-                            chunk = conn.recv(65536)
-                            if not chunk:
-                                break
-                            buf += chunk
-                        reply = self.handle(buf.decode(errors="replace"))
-                    except Exception as exc:  # noqa: BLE001
-                        log.exception("request failed")
-                        reply = {"ok": False, "state": self.state, "error": str(exc)}
-                    try:
-                        conn.sendall((json.dumps(reply) + "\n").encode())
-                    except OSError:
-                        pass
+                # One thread per request: a slow one (a meeting stopping, the calendar)
+                # never delays a key release.
+                threading.Thread(target=self._serve_one, args=(conn,), daemon=True).start()
         finally:
             with self.lock:
                 if self.meeting:

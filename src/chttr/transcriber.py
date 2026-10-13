@@ -98,7 +98,11 @@ class WhisperTranscriber:
     name = "whisper"
 
     def __init__(self, cfg: Config) -> None:
-        from pywhispercpp.model import Model
+        try:
+            from pywhispercpp.model import Model
+        except ImportError as exc:
+            raise RuntimeError("the whisper engine needs pywhispercpp: re-run bin/setup, or "
+                               "uv tool install --editable <chttr checkout> --with pywhispercpp") from exc
 
         w = cfg.whisper
         threads = _threads(cfg.engine.threads or w.threads)

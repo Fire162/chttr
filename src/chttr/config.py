@@ -13,7 +13,7 @@ APP = "chttr"
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP
 CONFIG_FILE = Path(os.environ["CHTTR_CONFIG"]).expanduser() if os.environ.get("CHTTR_CONFIG") else CONFIG_DIR / "config.toml"
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / APP
-RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/{APP}-{os.getuid()}")) / APP
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{APP}-{os.getuid()}") / APP
 SOCKET_PATH = RUNTIME_DIR / "chttr.sock"
 STATE_FILE = RUNTIME_DIR / "state"
 HISTORY_FILE = DATA_DIR / "history.jsonl"
@@ -47,6 +47,10 @@ name = "parakeet"
 parakeet_dir = ""
 # 0 = auto (half the logical CPUs)
 threads = 0
+# Recognize while you talk: every pause is transcribed in the background, so
+# releasing the key leaves only the last second or so to do. false = one pass
+# over the whole recording after release.
+streaming = true
 
 [whisper]
 # ggml model name (tiny, base, base.en, small, small.en, medium, large-v3-turbo, ...)
@@ -78,6 +82,10 @@ speech_threshold_db = -38
 mode = "type"
 trailing_space = true
 fallback_to_clipboard = true
+# Typing goes character by character; text longer than this many characters is
+# pasted instead (your clipboard is restored right after). Not in terminals.
+# 0 = always type.
+paste_over = 400
 
 [polish]
 # Wispr Flow-style cleanup: fillers removed, punctuation fixed, self-corrections
@@ -86,17 +94,29 @@ fallback_to_clipboard = true
 #                     running, else no cleanup
 #          "claude" | "ollama" | "none"
 backend = "auto"
+# Dictation cleanup and command mode. Haiku answers in a few hundred milliseconds,
+# which is what makes dictation feel instant; any Claude model id works here.
+cleanup_model = "claude-haiku-5-5"
+# Meeting notes (and cleanup, if cleanup_model = "")
 model = "claude-opus-5-5"
 effort = "low"
 timeout_seconds = 20
+# Short phrases with no fillers, self-corrections or spoken punctuation ("git
+# status", "sounds good") are typed as recognized, without a model round trip.
+# The longest phrase that can skip cleanup, in words; 0 sends everything.
+quick_max_words = 4
 # Optional: file containing an Anthropic API key (chmod 600). Used when
 # ANTHROPIC_API_KEY is not in the daemon's environment.
 api_key_file = "~/.config/chttr/anthropic-api-key"
 # Local alternative (fully offline): https://ollama.com, e.g. `ollama pull llama3.2`
 ollama_model = "llama3.2"
 ollama_url = "http://127.0.0.1:11434"
-# Tell the model which app is focused so it can adapt tone/formatting
+# Tell the model which app is focused (its window class, e.g. "Slack") so it can
+# adapt tone and formatting
 use_app_context = true
+# Also send the window title ("Re: Q3 budget - Mail"). It helps with names and
+# context, but titles can contain email subjects and document names.
+send_window_title = true
 
 [feedback]
 sounds = true
@@ -186,6 +206,7 @@ class EngineCfg:
     name: str = "parakeet"
     parakeet_dir: str = ""
     threads: int = 0
+    streaming: bool = True
 
 
 @dataclass
@@ -210,18 +231,22 @@ class OutputCfg:
     mode: str = "type"
     trailing_space: bool = True
     fallback_to_clipboard: bool = True
+    paste_over: int = 400
 
 
 @dataclass
 class PolishCfg:
     backend: str = "auto"
+    cleanup_model: str = "claude-haiku-5-5"
     model: str = "claude-opus-5-5"
     effort: str = "low"
     timeout_seconds: float = 20
+    quick_max_words: int = 4
     api_key_file: str = "~/.config/chttr/anthropic-api-key"
     ollama_model: str = "llama3.2"
     ollama_url: str = "http://127.0.0.1:11434"
     use_app_context: bool = True
+    send_window_title: bool = True
     # legacy key, maps to backend = "none" when false
     enabled: bool = True
 
@@ -338,10 +363,30 @@ def write_default_config(path: Path = CONFIG_FILE) -> bool:
     if path.exists():
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(DEFAULT_CONFIG)
+    path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     return True
 
 
 def ensure_runtime_dir() -> Path:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     return RUNTIME_DIR
+
+
+def ensure_data_dir() -> Path:
+    """~/.local/share/chttr holds dictation history, meeting audio and voiceprints: yours only."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return DATA_DIR
+
+
+def open_private(path: Path, append: bool = True):
+    """Open a text file for writing that only you can read (created 0600)."""
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+    return os.fdopen(os.open(path, flags, 0o600), "a" if append else "w", encoding="utf-8")
+
+
+def too_open(path: Path) -> bool:
+    """True if a secret file is readable by other users."""
+    try:
+        return os.name == "posix" and bool(path.stat().st_mode & 0o077)
+    except OSError:
+        return False

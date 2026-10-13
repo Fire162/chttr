@@ -34,6 +34,6 @@ def send(command: str, timeout: float = 5.0) -> dict:
 
 def read_state() -> str:
     try:
-        return C.STATE_FILE.read_text().strip() or "idle"
+        return C.STATE_FILE.read_text(encoding="utf-8").strip() or "idle"
     except OSError:
         return "idle"
