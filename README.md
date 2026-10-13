@@ -13,7 +13,7 @@ meeting notes, with names next to every line.
 Speech recognition runs on your machine. Claude (optional) tidies dictation
 and writes meeting summaries.
 
-> **Early release (0.8).** Built and used daily on an Omarchy 4 laptop. The
+> **Early release (0.9).** Built and used daily on an Omarchy 4 laptop. The
 > logic is covered by a test suite that runs in CI on every change; the Google
 > Meet extension has been used in few real calls so far. Issues and fixes
 > welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -278,6 +278,30 @@ when `keep_audio` kept it), click a speaker to rename them, switch the notes
 style, and every action item across meetings in one table. It listens on
 127.0.0.1 only, with a one-time token in the link.
 
+### Send notes where your team works
+
+```bash
+chttr connect slack        # an incoming-webhook URL for the channel
+chttr connect notion       # an integration secret + the page that holds your notes
+chttr connect hubspot      # a private-app token (contacts read/write)
+chttr connect webhook      # any URL; signed with X-Chttr-Signature if you give a secret
+chttr connect              # what's connected
+```
+
+After each meeting the "notes saved" notification gets a **Send to Slack /
+Notion / HubSpot** button per connected destination; nothing leaves without
+that click. Slack gets a formatted summary with the action items, Notion a page
+with headings and to-dos, HubSpot a note (and a task per action item) on the
+attendees' contacts, matched by email. `chttr send [MEETING] [--to slack]`
+does it by hand. To send without asking, set `[integrations] send = "always"`,
+optionally only for meetings whose calendar title matches `auto_titles`
+(say, `'\b(customer|demo)\b'`). Tokens are stored in your desktop keyring
+(libsecret), never in the config file.
+
+For anything else, `[integrations] on_meeting_done` runs your own script after
+every meeting with the Markdown path as `$1` and the whole meeting as JSON on
+stdin.
+
 ### Note styles
 
 Notes come in 18 styles, and a meeting can switch style at any time, even
@@ -389,6 +413,8 @@ recorded. Tell people.
 | `chttr meeting styles` | List note styles |
 | `chttr meeting voices [--forget KEY]` | Remembered voices |
 | `chttr meeting install` | Register the Meet extension and native host |
+| `chttr connect [slack\|notion\|hubspot\|webhook] [--remove]` | Connect a destination for meeting notes (no argument: list them) |
+| `chttr send [MEETING] [--to DEST] [-y]` | Send a meeting's notes to your connected destinations |
 | `chttr ask [-v] QUESTION` | Answer a question from your meetings, with citations |
 | `chttr mcp` | Your meetings as an MCP server for Claude Code / Claude Desktop |
 | `chttr ui [--port N] [--no-browser]` | The meeting library in your browser |
@@ -455,6 +481,7 @@ when you turn it on:
 | Up to 600 characters before the cursor | Same, as context | `[polish] screen_context = "full"` | Any other value |
 | Meeting transcript, invitees' names and emails, calendar title and description | Anthropic | You added an API key | `[meeting] summary = false` |
 | Snippets of your meetings that Claude searches for | Anthropic | You run `chttr ask` (or an MCP client asks) | Don't use them |
+| A meeting's notes, action items and attendees' emails | Slack / Notion / HubSpot / your webhook | You click "Send to …" (or set `send = "always"`) | Don't connect them |
 | Calendar feed request | Google | You added a secret iCal address | Remove it from `calendar-urls` |
 | Model downloads (once, checksum-verified) | Hugging Face | `chttr setup` | Copy the models in by hand |
 

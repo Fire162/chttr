@@ -43,15 +43,31 @@ def rename(directory: Path, old: str, name: str, email: str, cfg: Config) -> Pat
 
 
 
-def notify_done(md: Path, summary_line: str) -> None:
-    """Notification with an Open button; waits for the click in this (background) process."""
+def notify_done(md: Path, summary_line: str, offer: list[str] | None = None, on_send=None) -> None:
+    """Notification with an Open button, and a "Send to ..." button per destination in
+    `offer` (on_send(destination) does the sending). Waits for the click in this
+    (background) process."""
+    from ..integrations import label
+
+    offer = offer or []
+    actions = ["-A", "open=Open"]
+    for d in offer:
+        actions += ["-A", f"send:{d}=Send to {label(d)}"]
+    if len(offer) > 1:
+        actions += ["-A", "send:all=Send everywhere"]
     try:
-        out = subprocess.run(["notify-send", "-a", "chttr", "-A", "open=Open", "-t", "60000", "--wait",
+        out = subprocess.run(["notify-send", "-a", "chttr", *actions, "-t", "120000", "--wait",
                               f"Meeting notes saved: {md.stem}", summary_line],
-                             capture_output=True, text=True, timeout=120)
-        if out.stdout.strip() == "open":
+                             capture_output=True, text=True, timeout=180)
+        choice = out.stdout.strip()
+        if choice == "open":
             subprocess.Popen(["xdg-open", str(md)], start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif choice.startswith("send:") and on_send:
+            targets = offer if choice == "send:all" else [choice.removeprefix("send:")]
+            for d in targets:
+                if d in offer:
+                    on_send(d)
     except (OSError, subprocess.TimeoutExpired):
         pass
 
