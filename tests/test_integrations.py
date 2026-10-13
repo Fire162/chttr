@@ -145,3 +145,12 @@ def test_hook_gets_the_markdown_path_and_json(tmp_path):
     I.run_hook(f'cat > {out}.json; echo "$1" > {out}.path', MEETING)
     assert json.loads((tmp_path / "out.json").read_text())["title"] == "Pricing review"
     assert (tmp_path / "out.path").read_text().strip() == "/notes/x.md"
+
+
+def test_hook_appends_the_path_only_when_the_command_does_not_use_it(monkeypatch):
+    ran = []
+    monkeypatch.setattr(I.subprocess, "run", lambda cmd, **k: ran.append(cmd))
+    I.run_hook("~/bin/notify.sh", MEETING)
+    I.run_hook('cp "$1" ~/Notes/', MEETING)
+    assert ran[0][2] == '~/bin/notify.sh "$1"' and ran[0][4] == "/notes/x.md"
+    assert ran[1][2] == 'cp "$1" ~/Notes/'
