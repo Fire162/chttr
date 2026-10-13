@@ -243,7 +243,8 @@ more responsive daemon. No change to how you use chttr.
 
 ## [0.2.1] - 2026-10-11
 
-First public release: push-to-talk, hands-free and command-mode dictation with
+The state of chttr before this changelog was kept (earlier releases: v0.1.0,
+v0.2.0): push-to-talk, hands-free and command-mode dictation with
 local Parakeet speech-to-text and Claude or Ollama cleanup, per-app modes, the
 personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
