@@ -48,9 +48,9 @@ name = "parakeet"
 parakeet_dir = ""
 # 0 = auto (half the logical CPUs)
 threads = 0
-# Recognize while you talk: every pause is transcribed in the background, so
-# releasing the key leaves only the last second or so to do. false = one pass
-# over the whole recording after release.
+# Recognize while you talk: once you've said a few seconds' worth, the next pause
+# is transcribed in the background, so releasing the key leaves only the last
+# sentence or so to do. false = one pass over the whole recording after release.
 streaming = true
 
 [whisper]

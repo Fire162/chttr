@@ -5,6 +5,36 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0rc1] - 2026-10-13
+
+The launch candidate: everything above, documented for people who haven't met
+chttr yet.
+
+### Added
+- A rewritten README: what chttr does in one screen, a screenshot of the
+  meeting library, measured latency, a comparison with Wispr Flow, Fathom,
+  Handy and Meetily, and an architecture diagram.
+- `docs/configuration.md`, every config key with its explanation, generated
+  from the defaults (`scripts/gen-config-docs.py`; a test keeps it in sync).
+- `ROADMAP.md`: what shipped, what's next, what was considered and left out.
+
+### Fixed
+- Hyprland is recognised even when the daemon's systemd environment lacks
+  `HYPRLAND_INSTANCE_SIGNATURE` (from `XDG_CURRENT_DESKTOP` or Hyprland's
+  sockets), so per-app modes keep working. When the compositor can't be told,
+  chttr bindings in a Hyprland or Sway config stop chttr from also reading the
+  keyboard, which would have fired every press twice.
+- `on_meeting_done` appended the Markdown path even when the command already
+  used `$1`.
+- Screen context waits at most 0.2 s for the text field and stops asking the
+  accessibility bus after five unreadable fields in a row (it isn't running
+  on every desktop), so it can never slow dictation down.
+
+### Changed
+- Release candidates (`vX.Y.ZrcN` tags) are published as GitHub pre-releases.
+- The Meet extension's version is the release without its pre-release suffix
+  (Chrome only accepts numbers).
+
 ## [0.9.0] - 2026-10-13
 
 Integrations.
@@ -219,7 +249,8 @@ personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
 Omarchy plugin.
 
-[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/robjobbed/chttr/compare/v1.0.0rc1...HEAD
+[1.0.0rc1]: https://github.com/robjobbed/chttr/compare/v0.9.0...v1.0.0rc1
 [0.9.0]: https://github.com/robjobbed/chttr/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/robjobbed/chttr/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/robjobbed/chttr/compare/v0.6.0...v0.7.0

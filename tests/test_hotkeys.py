@@ -144,3 +144,10 @@ def test_daemon_hotkey_dispatch(monkeypatch):
 @pytest.mark.skipif(struct.calcsize("l") != 8, reason="input_event layout differs on 32-bit")
 def test_input_event_is_24_bytes_on_64_bit_linux():
     assert H.EVENT.size == 24
+
+
+def test_compositor_bindings_anywhere_prevent_double_presses(monkeypatch):
+    monkeypatch.setattr(H, "compositor_has_bindings", lambda c: c == "hyprland")
+    monkeypatch.setattr(H, "readable_keyboards", lambda: ["/dev/input/event3"])
+    # even if detection misses Hyprland, its chttr bindings mean: don't also read the keyboard
+    assert H.resolve("auto", "wlroots") == "compositor"

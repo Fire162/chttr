@@ -245,3 +245,14 @@ def test_learn_from_edits_offers_and_learns(daemon, monkeypatch, tmp_path):
     assert dictionary.Dictionary.load(tmp_path / "d.toml").replacements == {"sorov": "Sohrab"}
     daemon._learn_from_edits("Please send the contract to Sorov by Friday.")
     assert len(asked) == 1                                      # offered once per session
+
+
+def test_screen_context_backs_off_when_atspi_never_answers(daemon, monkeypatch):
+    calls = []
+    monkeypatch.setattr(Dm.CX, "read_field", lambda *a, **k: calls.append(1))
+    daemon.transcriber.texts = ["one two three four five six"] * 8
+    for _ in range(8):
+        daemon.handle("start")
+        daemon.handle("release")
+        wait_idle(daemon)
+    assert len(calls) == Dm.ATSPI_GIVE_UP
