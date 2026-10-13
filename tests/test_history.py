@@ -14,7 +14,7 @@ def test_stats_counts_words_speed_and_apps(tmp_path, monkeypatch):
         {"ts": (now - timedelta(days=1)).isoformat(), "seconds": 3, "app": "kitty", "raw": "git status"},
     ]
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n")
-    monkeypatch.setattr(history, "HISTORY_FILE", path)
+    monkeypatch.setattr(history.C, "HISTORY_FILE", path)
     entries = history.load()
     assert len(entries) == 2
     out = history.stats(entries, days=3)

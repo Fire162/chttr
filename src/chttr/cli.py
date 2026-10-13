@@ -120,6 +120,39 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    """Answer a question from your meetings with Claude."""
+    from .ask import ask
+    from .notes import available
+
+    cfg = C.load_config()
+    if not available(cfg.polish):
+        print("chttr ask needs Claude: put an Anthropic API key in ~/.config/chttr/anthropic-api-key", file=sys.stderr)
+        return 1
+    question = " ".join(args.question)
+
+    def show(name: str, kw: dict) -> None:
+        if args.verbose:
+            shown = ", ".join(f"{k}={v!r}" for k, v in kw.items() if v)
+            print(f"  · {name}({shown})", file=sys.stderr, flush=True)
+
+    print(ask(question, cfg, on_search=show))
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from .mcp_server import run
+
+    return run()
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    from .ui import serve
+
+    serve(port=args.port, open_browser=not args.no_browser, cfg=C.load_config())
+    return 0
+
+
 def cmd_polish(args: argparse.Namespace) -> int:
     """Read raw text on stdin, print cleaned text (usable as a post-processor for other tools)."""
     cfg = C.load_config()
@@ -718,6 +751,19 @@ def build_parser() -> argparse.ArgumentParser:
     bn.add_argument("--engine", choices=["parakeet", "whisper"])
     bn.add_argument("--format", choices=["text", "json", "markdown"], default="text")
     bn.set_defaults(func=cmd_bench)
+
+    ak = sub.add_parser("ask", help='ask your meetings: chttr ask "what did Dana commit to last week?"')
+    ak.add_argument("question", nargs="+")
+    ak.add_argument("-v", "--verbose", action="store_true", help="show the searches Claude runs")
+    ak.set_defaults(func=cmd_ask)
+
+    mc = sub.add_parser("mcp", help="serve your meetings to Claude Code / Claude Desktop (MCP, stdio)")
+    mc.set_defaults(func=cmd_mcp)
+
+    ui = sub.add_parser("ui", help="the meeting library in your browser (search, transcripts, renames)")
+    ui.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free one)")
+    ui.add_argument("--no-browser", action="store_true", help="only print the link")
+    ui.set_defaults(func=cmd_ui)
 
     po = sub.add_parser("polish", help="clean up dictated text from stdin with Claude")
     po.add_argument("--app", help="name of the focused app, for tone/formatting")
