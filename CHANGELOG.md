@@ -16,6 +16,7 @@ chttr yet.
   Handy and Meetily, and an architecture diagram.
 - `docs/configuration.md`, every config key with its explanation, generated
   from the defaults (`scripts/gen-config-docs.py`; a test keeps it in sync).
+- `ROADMAP.md`: what shipped, what's next, what was considered and left out.
 
 ### Fixed
 - Hyprland is recognised even when the daemon's systemd environment lacks
@@ -25,6 +26,9 @@ chttr yet.
   keyboard, which would have fired every press twice.
 - `on_meeting_done` appended the Markdown path even when the command already
   used `$1`.
+- Screen context waits at most 0.2 s for the text field and stops asking the
+  accessibility bus after five unreadable fields in a row (it isn't running
+  on every desktop), so it can never slow dictation down.
 
 ### Changed
 - Release candidates (`vX.Y.ZrcN` tags) are published as GitHub pre-releases.

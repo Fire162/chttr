@@ -521,8 +521,9 @@ uv sync --group dev && uv run pytest     # 120+ tests, no models or audio device
 uv run ruff check . && uv run pyright
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout and guidelines, and
-[CHANGELOG.md](CHANGELOG.md) for what changed in each release.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout and guidelines,
+[CHANGELOG.md](CHANGELOG.md) for what changed in each release, and
+[ROADMAP.md](ROADMAP.md) for what's next.
 
 ## Privacy
 
