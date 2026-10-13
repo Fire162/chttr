@@ -6,16 +6,16 @@ import json
 from collections import Counter
 from datetime import datetime, timedelta
 
-from .config import HISTORY_FILE
+from . import config as C
 
 TYPING_WPM = 40          # an average typist, for "time saved"
 
 
 def load() -> list[dict]:
-    if not HISTORY_FILE.exists():
+    if not C.HISTORY_FILE.exists():
         return []
     entries = []
-    for line in HISTORY_FILE.read_text(encoding="utf-8").splitlines():
+    for line in C.HISTORY_FILE.read_text(encoding="utf-8").splitlines():
         try:
             e = json.loads(line)
         except json.JSONDecodeError:

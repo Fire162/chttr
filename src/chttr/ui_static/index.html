@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>chttr · meetings</title>
+  <link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">chttr</div>
+    <form id="search" class="search" autocomplete="off">
+      <input id="q" type="search" placeholder="Search every meeting… (try a name, a number, a decision)" aria-label="Search meetings">
+    </form>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="meetings" role="tab">Meetings</button>
+      <button class="tab" data-view="actions" role="tab">Action items</button>
+    </nav>
+  </header>
+  <main class="layout">
+    <aside id="list" class="list" aria-label="Meetings"></aside>
+    <section id="detail" class="detail" aria-live="polite">
+      <div class="empty">Pick a meeting, or search across all of them.</div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="static/app.js"></script>
+</body>
+</html>

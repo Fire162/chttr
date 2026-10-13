@@ -13,7 +13,7 @@ meeting notes, with names next to every line.
 Speech recognition runs on your machine. Claude (optional) tidies dictation
 and writes meeting summaries.
 
-> **Early release (0.7).** Built and used daily on an Omarchy 4 laptop. The
+> **Early release (0.8).** Built and used daily on an Omarchy 4 laptop. The
 > logic is covered by a test suite that runs in CI on every change; the Google
 > Meet extension has been used in few real calls so far. Issues and fixes
 > welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -247,6 +247,37 @@ How it works:
   written. Audio is deleted afterwards unless `keep_audio = true` (then it's
   kept as stereo Opus next to the notes: you left, them right).
 
+### Ask your meetings
+
+Every meeting (and dictation) goes into a local full-text index
+(`~/.local/share/chttr/library.sqlite`), so you can ask across all of them:
+
+```bash
+chttr ask "what did Dana commit to last month?"
+chttr ask -v "when did we last talk about the Acme pricing?"   # -v shows the searches
+```
+
+Claude searches the index with tools (several phrasings, then reads the
+transcript around the hits) and answers with citations like
+`[Pricing review, 2026-10-01, 00:12:40]`. Only the snippets it asks for are
+sent, only when you ask.
+
+**In Claude Code or Claude Desktop**, the same tools are an MCP server:
+
+```bash
+claude mcp add chttr -- chttr mcp
+```
+
+Then ask Claude Code things like "check my meetings for what we decided about
+the API rate limits" while you work. Read-only: `search_meetings`,
+`read_transcript`, `get_notes`, `list_meetings`, `list_action_items`.
+
+**In the browser**, `chttr ui` opens the library: search with highlighted
+matches, notes and transcripts with clickable timestamps (synced to the audio
+when `keep_audio` kept it), click a speaker to rename them, switch the notes
+style, and every action item across meetings in one table. It listens on
+127.0.0.1 only, with a one-time token in the link.
+
 ### Note styles
 
 Notes come in 18 styles, and a meeting can switch style at any time, even
@@ -358,6 +389,9 @@ recorded. Tell people.
 | `chttr meeting styles` | List note styles |
 | `chttr meeting voices [--forget KEY]` | Remembered voices |
 | `chttr meeting install` | Register the Meet extension and native host |
+| `chttr ask [-v] QUESTION` | Answer a question from your meetings, with citations |
+| `chttr mcp` | Your meetings as an MCP server for Claude Code / Claude Desktop |
+| `chttr ui [--port N] [--no-browser]` | The meeting library in your browser |
 
 ## Config
 
@@ -420,6 +454,7 @@ when you turn it on:
 | Names near the cursor | Same, as spellings to keep | `[polish] screen_context = "names"` or `"full"` (default `"local"`: used on this machine only) | `"local"` or `"off"` |
 | Up to 600 characters before the cursor | Same, as context | `[polish] screen_context = "full"` | Any other value |
 | Meeting transcript, invitees' names and emails, calendar title and description | Anthropic | You added an API key | `[meeting] summary = false` |
+| Snippets of your meetings that Claude searches for | Anthropic | You run `chttr ask` (or an MCP client asks) | Don't use them |
 | Calendar feed request | Google | You added a secret iCal address | Remove it from `calendar-urls` |
 | Model downloads (once, checksum-verified) | Hugging Face | `chttr setup` | Copy the models in by hand |
 

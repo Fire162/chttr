@@ -5,6 +5,26 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-13
+
+Ask your meetings.
+
+### Added
+- The meeting library (`library.py`): a local SQLite FTS5 index over every
+  transcript line, the notes, action items and dictations, updated
+  incrementally (`~/.local/share/chttr/library.sqlite`, 0600; safe to delete).
+  Porter stemming, BM25 ranking, snippets, speaker and date filters.
+- `chttr ask "QUESTION"`: Claude searches the library with tools (search, read
+  around a moment, notes, meetings, action items) and answers with citations
+  to the meeting and the moment. `-v` shows the searches.
+- `chttr mcp`: the same tools as a read-only MCP server (stdio) for Claude Code
+  (`claude mcp add chttr -- chttr mcp`) and Claude Desktop.
+- `chttr ui`: the library in the browser, on 127.0.0.1 with a one-time token
+  (Host-checked, POSTs need the token header, strict CSP): search with
+  highlights, notes, transcripts with clickable timestamps and audio, speaker
+  renames, note-style switching, and every action item in one table. Works in
+  light and dark mode and on narrow screens.
+
 ## [0.7.0] - 2026-10-13
 
 Meetings beyond Google Meet.
@@ -180,7 +200,8 @@ personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
 Omarchy plugin.
 
-[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/robjobbed/chttr/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/robjobbed/chttr/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/robjobbed/chttr/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/robjobbed/chttr/compare/v0.4.0...v0.5.0

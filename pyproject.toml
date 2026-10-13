@@ -1,6 +1,6 @@
 [project]
 name = "chttr"
-version = "0.7.0"
+version = "0.8.0"
 description = "Voice dictation and meeting notes for Linux: local speech-to-text, Claude cleanup, speaker-named transcripts"
 authors = [
     { name = "Rob Behbahani" }

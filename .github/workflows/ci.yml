@@ -27,8 +27,8 @@ jobs:
         run: uv run ruff check --output-format=github .
       - name: pyright
         run: uv run pyright
-      - name: Meet extension parses
-        run: for f in src/chttr/extension/*.js; do node --check "$f"; done
+      - name: Extension and library UI parse
+        run: for f in src/chttr/extension/*.js src/chttr/ui_static/*.js; do node --check "$f"; done
 
   test:
     name: Tests (Python ${{ matrix.python }})
@@ -88,7 +88,8 @@ jobs:
           python3 - <<'EOF'
           import glob, zipfile
           names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
-          for needed in ("chttr/note_styles.toml", "chttr/extension/manifest.json", "chttr/overlay.py"):
+          for needed in ("chttr/note_styles.toml", "chttr/extension/manifest.json", "chttr/overlay.py",
+                         "chttr/atspi_helper.py", "chttr/ui_static/index.html", "chttr/ui_static/app.js"):
               assert needed in names, f"{needed} missing from the wheel"
           print("ok:", len(names), "files")
           EOF
