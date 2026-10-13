@@ -4,7 +4,7 @@
 # speech stack, onnx-asr, isn't packaged for Arch). Models are downloaded on
 # first `chttr setup`, checksum-verified.
 pkgname=chttr-git
-pkgver=0.9.0
+pkgver=1.0.0rc1
 pkgrel=1
 pkgdesc="Voice dictation and meeting notes for Linux: local speech-to-text, Claude cleanup, speaker-named transcripts"
 arch=('x86_64' 'aarch64')
@@ -32,7 +32,7 @@ sha256sums=('SKIP')
 pkgver() {
   cd "$pkgname"
   git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' \
-    || printf "0.4.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    || printf "1.0.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
 build() {

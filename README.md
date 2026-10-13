@@ -1,72 +1,106 @@
 # chttr
 
 [![CI](https://github.com/robjobbed/chttr/actions/workflows/ci.yml/badge.svg)](https://github.com/robjobbed/chttr/actions/workflows/ci.yml)
+[![Benchmark](https://github.com/robjobbed/chttr/actions/workflows/bench.yml/badge.svg)](https://github.com/robjobbed/chttr/actions/workflows/bench.yml)
+[![Release](https://img.shields.io/github/v/release/robjobbed/chttr)](https://github.com/robjobbed/chttr/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-Voice dictation and meeting transcripts for Linux: Hyprland and
-[Omarchy](https://omarchy.org) first, and GNOME, KDE Plasma, Sway, niri and X11
-too. Hold **Insert**, talk, let go: the words land in whatever window has focus,
-cleaned up like you typed them. Join a Google Meet call and chttr can write the
-meeting notes, with names next to every line.
+**Voice dictation and meeting notes for Linux.** Hold a key, talk, let go: clean
+text appears in whatever app has focus. Take a call in Zoom, Teams or Meet: get
+notes with a name on every line, no bot in the call. Then ask your meetings
+questions, from the terminal or from Claude Code.
 
-Speech recognition runs on your machine. Claude (optional) tidies dictation
-and writes meeting summaries.
+Speech recognition runs on your machine. Claude (optional) does the cleanup and
+writes the notes. Everything lands in plain files you own.
 
-> **Early release (0.9).** Built and used daily on an Omarchy 4 laptop. The
-> logic is covered by a test suite that runs in CI on every change; the Google
-> Meet extension has been used in few real calls so far. Issues and fixes
-> welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
+```text
+you say:   "um so send the contract to Sorov by Tuesday, no, Friday"
+it types:  Send the contract to Sohrab by Friday.
+```
 
-- **Local speech-to-text** with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX, the
-  model Omarchy's voxtype downloads), about 3× faster than whisper base.en on
-  CPU and more accurate. whisper.cpp is still available (`[engine] name = "whisper"`).
-- **Streaming recognition**: what you said before a pause is transcribed while
-  you keep talking, so letting go of the key leaves only the last sentence or
-  two to recognize: a 20-second dictation is ready in about half the time of a
-  full pass (0.3 s instead of 0.7 s on a desktop CPU), with the same accuracy (`chttr bench`
-  measures it on your machine).
-- **Wispr-style cleanup** with Claude Haiku (a few hundred milliseconds), or a
-  local Ollama model: filler words removed, punctuation and casing fixed,
-  self-corrections applied ("Tuesday, no, Wednesday"), spoken formatting
-  honoured. Four levels, from `light` (your exact words, punctuated) to `high`
-  (edited like a careful editor). Short, clean phrases skip the round trip
-  entirely. Falls back to the raw transcript if no model is available.
-- **Developer dictation**: "camel case user id" types `userId` (snake, kebab,
-  Pascal and constant case too), and in editors and terminals "at main dot
-  py" types `@main.py` for Claude Code, Cursor and Aider.
-- **Names from the screen**: words near the cursor (read locally through the
-  accessibility bus) fix sound-alike names, so "Priyanca" comes out as the
-  "Priyanka" in the email you're replying to. Nothing extra leaves your machine
-  unless you ask it to (`[polish] screen_context`).
-- **Learns from your corrections**: change a name chttr got wrong and it offers
-  to remember the spelling.
-- **Per-app modes**: terminals get one plain line with no trailing period, code
-  editors keep identifiers, chat apps stay casual, email and docs get full
-  sentences. A config table matched against the focused window's class.
-- **Command mode**: select text, hold Alt+Insert, say "make this shorter" or
-  "turn this into bullet points", let go: the selection is replaced.
-- **Hands-free**: Super+Insert, or double-tap Insert, starts a recording that
-  stops by itself after a pause (1.5 s by default) or on the next tap.
-- **Whisper mode**: dictate quietly; chttr lowers its speech threshold and
-  boosts the audio before recognition.
-- **25 languages**: Parakeet recognizes English and 24 European languages and
-  picks the language by itself; the cleanup keeps whatever language you spoke.
-- **Live captions**: the floating waveform pill shows the words as you speak.
-- **Personal dictionary and snippets**: names that stick forever, and phrases
-  like "insert my email" that expand to saved text. `chttr fix` learns from the
-  last dictation.
-- **Meeting transcripts** for Google Meet, Zoom, Teams, Slack and any other call
-  app, with no bot in the call: records your mic and the other side as separate
-  channels, splits the other side into voices, and names them from Google
-  Meet's captions, your Google Calendar and voices it has heard before. Writes
-  Markdown notes in the style you choose (general, BANT, MEDDPICC, 1:1,
-  standup, interview, retro and more, or your own), switchable after the call.
-  Everything but the notes runs locally.
-- **History and stats**: a picker to re-type any past dictation, optional audio
-  replay, words per day, speaking speed and time saved. `chttr doctor --mic`
-  checks your microphone end to end.
-- Auto-unmute of the mic, sounds, notifications, a state file for the bar.
+![The meeting library: searching every meeting for "forty five" jumps to the moment it was said](docs/img/library.png)
+
+> **1.0 release candidate, used daily on an Omarchy laptop.** 250+ tests and
+> real-model benchmarks run in CI on every change; GNOME and KDE support is new
+> and would love your reports. Issues and fixes welcome:
+> [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## What you get
+
+**Dictation** (think Wispr Flow, for Linux)
+
+- **Local, fast recognition.** NVIDIA Parakeet TDT 0.6B v3 on the CPU, in 25
+  languages. Streaming recognition transcribes what you said before each pause
+  while you keep talking, so letting go of the key leaves about a sentence to
+  recognize.
+- **Cleanup that reads like you typed it.** Fillers out, punctuation in,
+  "Tuesday, no, Friday" becomes "Friday", spoken formatting honoured. Claude
+  Haiku, or Ollama for fully offline use, at four levels from `light` to `high`.
+- **It knows where you are.** Terminals get one plain line, editors keep
+  identifiers, chat stays casual, email gets sentences. Names on screen near the
+  cursor fix sound-alike names. Correct a name once and it offers to remember it.
+- **Developer dictation.** "camel case user id" types `userId`; in editors and
+  terminals "at src slash app dot ts" types `@src/app.ts` for Claude Code,
+  Cursor and Aider.
+- **Command mode, hands-free, whisper mode.** Select text and say "make this
+  shorter"; double-tap for hands-free; dictate quietly in an open office.
+
+**Meetings** (think Fathom, without the bot)
+
+- **Any call app.** Google Meet through a small extension; Zoom, Teams, Slack,
+  Discord, Webex and browser calls noticed by which app holds your microphone.
+  chttr records your mic and the other side as separate channels.
+- **Names on every line.** Voices are clustered on your machine and named from
+  Meet's captions, voices it has heard before, your calendar invite, and Claude
+  reading the conversation. People in the room with you get their own label.
+- **Notes your way.** 18 styles (general, sales BANT/MEDDPICC, 1:1, standup,
+  interview, retro, ...) or your own, switchable after the call. Markdown files
+  in `~/Documents/Meetings`.
+- **Ask your meetings.** `chttr ask "what did Dana commit to last month?"`
+  answers with citations to the moment; `chttr mcp` gives Claude Code the same
+  tools; `chttr ui` is a searchable library in your browser.
+- **Send them on.** Slack, Notion, HubSpot or a webhook, one click after the
+  call (never without it, unless you say so).
+
+**Built to be trusted**
+
+- Audio never leaves your machine; [exactly what does](#privacy) is in a table.
+- Models are pinned to a commit and SHA-256-verified; tokens live in your keyring.
+- Works on Hyprland/Omarchy, Sway, niri, KDE Plasma, GNOME and X11.
+
+## Speed
+
+Time from releasing the key to recognized text, measured by `chttr bench` on the
+same recordings (synthesized speech, so word error rates are only a smoke test):
+
+| Recording | Full pass over the recording | With streaming (after release) |
+|---|---:|---:|
+| 11 s email, GitHub runner (4 vCPU) | 774 ms | **264 ms** |
+| 18 s notes, GitHub runner (4 vCPU) | 1307 ms | **617 ms** |
+| 19 s notes, desktop CPU | 708 ms | **334 ms** |
+
+Cleanup with Claude Haiku adds a few hundred milliseconds; short phrases with
+nothing to fix skip it. The [Benchmark workflow](https://github.com/robjobbed/chttr/actions/workflows/bench.yml)
+re-measures on every change to `main`; run `chttr bench your.wav` on your machine.
+
+## How it compares
+
+As of October 2026, from each product's own documentation:
+
+| | chttr | Wispr Flow | Fathom | Handy | Meetily |
+|---|---|---|---|---|---|
+| Runs on Linux | ✓ | ✗ (Mac, Windows, iOS, Android) | Bot only | ✓ | Build from source |
+| Speech recognized on your machine | ✓ | ✗ | ✗ | ✓ | ✓ |
+| LLM cleanup of dictation | ✓ (Claude or Ollama) | ✓ | – | – | – |
+| Meeting notes without a bot | ✓ | Notetaker (Mac, Windows) | Mac app | – | ✓ |
+| Speaker names | ✓ (captions, voices, calendar) | – | ✓ | – | Planned |
+| Ask across all meetings | ✓ (`chttr ask`, MCP) | – | ✓ (Team plans) | – | Planned |
+| CRM / Slack / Notion | ✓ | – | ✓ (paid tiers) | – | – |
+| Open source | ✓ MIT | ✗ | ✗ | ✓ MIT | ✓ MIT |
+| Price | Free (your Claude API usage) | Free tier, Pro $15/mo | Free tier, paid plans | Free | Free, Pro tier |
+
+– not offered, or not in the product's documentation.
 
 ## Install
 
@@ -421,12 +455,36 @@ recorded. Tell people.
 
 ## Config
 
-See `chttr config` for every key with comments: engine, whisper model, audio
+[docs/configuration.md](docs/configuration.md) lists every key with its
+explanation (it is generated from the defaults chttr writes). `chttr config`
+shows yours; in short: engine, whisper model, audio
 device, hands-free timings and speech threshold, output mode (`type`, `paste`,
 `clipboard`), cleanup backend and models, overlay and live captions, history,
 and the `[[modes]]` table.
 
 ## How it works
+
+```mermaid
+flowchart LR
+  subgraph keys[" "]
+    K[Hotkey: compositor bind, portal or evdev]
+  end
+  K -->|start / release| D[chttr daemon]
+  M[pw-record: mic, 20 ms chunks] --> D
+  D --> S[streaming.py: segments at pauses]
+  S --> P[Parakeet ONNX, local]
+  P --> X[dictionary + sound-alikes + on-screen names + dev mode]
+  X --> C{cleanup}
+  C -->|Haiku / Ollama| T[desktop.py: wtype, ydotool, xdotool or paste]
+  C -->|short and clean| T
+  subgraph meeting[After a call]
+    R[mic.raw + them.raw] --> V[Silero VAD] --> PA[Parakeet] --> E[echo removal]
+    E --> W[WeSpeaker embeddings + clustering] --> N[naming: captions, voices, calendar]
+    N --> O[notes: Claude, 18 styles] --> F[Markdown + library index]
+  end
+  F --> A[chttr ask / mcp / ui]
+  F --> I[Slack, Notion, HubSpot, webhook]
+```
 
 `daemon.py` owns a small state machine (`idle` → `recording` → `transcribing`),
 listens on `$XDG_RUNTIME_DIR/chttr/chttr.sock`, and tracks what a recording is
