@@ -5,6 +5,37 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-13
+
+Linux-wide: GNOME, KDE Plasma, Sway, niri and X11 alongside Hyprland/Omarchy.
+
+### Added
+- A desktop layer (`desktop.py`) that picks the right tools per desktop: the
+  focused window from hyprctl, swaymsg, niri, kdotool, GNOME's Window Calls
+  extension or xdotool; typing with wtype, ydotool, xdotool or dotool
+  (`[output] typer`); shortcuts and the clipboard on Wayland and X11.
+- Global hotkeys outside Hyprland (`[hotkeys]`): the XDG GlobalShortcuts portal
+  on GNOME 48+ and KDE Plasma (press and release, so push-to-talk works), or
+  the keyboard devices directly elsewhere (`input` group). Keys are
+  configurable; Sway gets bindings from `chttr setup`.
+- `install.sh`: a one-line installer for any distribution that prints the
+  system packages it needs instead of running sudo; `packaging/aur/chttr-git`.
+- Menus and prompts through fuzzel, wofi, rofi, tofi, bemenu, dmenu or zenity
+  when Omarchy's picker isn't there; terminals and editors from `$TERMINAL`,
+  `$EDITOR` or the usual suspects.
+- The Meet extension's native host registers with Chrome, Brave, Vivaldi and
+  Edge as well as Chromium.
+- `chttr doctor` reports the desktop, typing tool, shortcuts, clipboard, window
+  info, menu tool and hotkey method it found.
+- CI runs the tests on Debian 13 and Fedora as well as Arch, and shellchecks the
+  scripts.
+
+### Changed
+- When typing fails, chttr pastes the text before falling back to the clipboard.
+- The overlay finds gtk4-layer-shell on Debian/Fedora library paths and stays
+  off on GNOME and X11 (no layer-shell there) instead of failing.
+- Built with hatchling instead of uv_build, so distributions can package it.
+
 ## [0.4.0] - 2026-10-13
 
 Speed: text arrives about as fast as you let go of the key. This release also
@@ -96,7 +127,8 @@ personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
 Omarchy plugin.
 
-[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/robjobbed/chttr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/robjobbed/chttr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/robjobbed/chttr/compare/v0.2.1...v0.4.0
 [0.2.1]: https://github.com/robjobbed/chttr/commit/7953228

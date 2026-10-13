@@ -3,7 +3,9 @@
 - config file, speech models (Parakeet if voxtype hasn't downloaded it, VAD and
   speaker embeddings for meetings)
 - a systemd user service for the daemon (replacing a Hyprland autostart line)
-- Hyprland keybindings, if there are no chttr bindings yet
+- keybindings: Hyprland and Sway get bindings in their config (if there are no
+  chttr bindings yet); GNOME and KDE use the global-shortcuts portal and other
+  desktops the keyboard devices, both from inside the daemon (see hotkeys.py)
 - the Google Meet extension and its native messaging host
 """
 
@@ -46,6 +48,17 @@ o.bind("ALT + Insert", "chttr: command mode (release)", "{exe} release", {{ rele
 o.bind("SUPER + Insert", "chttr: hands-free dictation", "{exe} toggle")
 o.bind("SUPER + SHIFT + Insert", "chttr: dictation history", "{exe} history")
 o.bind("SUPER + ALT + Insert", "chttr: record meeting (toggle)", "{exe} meeting toggle")
+"""
+
+SWAY_BINDINGS = """
+# chttr (https://github.com/robjobbed/chttr): hold Insert to dictate, release to type.
+bindsym Insert exec {exe} start
+bindsym --release Insert exec {exe} release
+bindsym Mod1+Insert exec {exe} command
+bindsym --release Mod1+Insert exec {exe} release
+bindsym Mod4+Insert exec {exe} toggle
+bindsym Mod4+Shift+Insert exec {exe} history
+bindsym Mod4+Mod1+Insert exec {exe} meeting toggle
 """
 
 BINDINGS_CONF = """
@@ -111,6 +124,15 @@ def service(exe: str) -> None:
 
 
 def keybindings(exe: str) -> None:
+    from .desktop import detect
+
+    desk = detect()
+    if desk.compositor == "sway":
+        sway_keybindings(exe)
+        return
+    if desk.compositor != "hyprland" and not (HYPR / "bindings.lua").exists():
+        _hotkeys_note(desk.compositor)
+        return
     lua, conf = HYPR / "bindings.lua", HYPR / "bindings.conf"
     target, block = (lua, BINDINGS_LUA) if lua.exists() else (conf, BINDINGS_CONF) if conf.exists() else (None, "")
     if target is None:
@@ -124,6 +146,40 @@ def keybindings(exe: str) -> None:
     target.write_text(text.rstrip("\n") + "\n" + block.format(exe=exe), encoding="utf-8")
     subprocess.run(["hyprctl", "reload"], capture_output=True, check=False)
     _say(f"keybindings: added to {target} (Insert, Alt/Super+Insert, Super+Alt+Insert)")
+
+
+def sway_keybindings(exe: str) -> None:
+    config = Path.home() / ".config/sway/config"
+    target = Path.home() / ".config/sway/config.d/chttr.conf"
+    text = config.read_text(encoding="utf-8") if config.exists() else ""
+    if "chttr" in text or target.exists():
+        _say("keybindings: sway already has chttr bindings; left alone")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(SWAY_BINDINGS.format(exe=exe), encoding="utf-8")
+    if "config.d" not in text:
+        if config.exists():
+            shutil.copy2(config, config.with_name("config.bak-chttr"))
+        config.parent.mkdir(parents=True, exist_ok=True)
+        with config.open("a", encoding="utf-8") as fh:
+            fh.write(f"\ninclude {target}\n")
+    subprocess.run(["swaymsg", "reload"], capture_output=True, check=False)
+    _say(f"keybindings: added {target} (Insert, Alt/Super+Insert, Super+Alt+Insert)")
+
+
+def _hotkeys_note(compositor: str) -> None:
+    from . import hotkeys as H
+
+    backend = H.resolve("auto", compositor)
+    if backend == "portal":
+        _say("keybindings: your desktop's global-shortcuts portal; when the daemon starts it asks you to confirm "
+             "chttr's keys (change them later in the desktop's keyboard settings)")
+    elif backend == "evdev":
+        _say("keybindings: chttr reads your keyboard directly (Insert, Alt/Super+Insert, Super+Alt+Insert)")
+    else:
+        _say("keybindings: PROBLEM: no way to catch keys here yet. Either add yourself to the input group "
+             "(sudo usermod -aG input $USER, then log out and in) or bind `chttr start` (press) and "
+             "`chttr release` (release) in your compositor.")
 
 
 def meet() -> None:

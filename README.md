@@ -4,15 +4,16 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-Voice dictation and meeting transcripts for [Omarchy](https://omarchy.org).
-Hold **Insert**, talk, let go: the words land in whatever window has focus,
+Voice dictation and meeting transcripts for Linux: Hyprland and
+[Omarchy](https://omarchy.org) first, and GNOME, KDE Plasma, Sway, niri and X11
+too. Hold **Insert**, talk, let go: the words land in whatever window has focus,
 cleaned up like you typed them. Join a Google Meet call and chttr can write the
 meeting notes, with names next to every line.
 
 Speech recognition runs on your machine. Claude (optional) tidies dictation
 and writes meeting summaries.
 
-> **Early release (0.4).** Built and used daily on an Omarchy 4 laptop. The
+> **Early release (0.5).** Built and used daily on an Omarchy 4 laptop. The
 > logic is covered by a test suite that runs in CI on every change; the Google
 > Meet extension has been used in few real calls so far. Issues and fixes
 > welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -22,8 +23,8 @@ and writes meeting summaries.
   CPU and more accurate. whisper.cpp is still available (`[engine] name = "whisper"`).
 - **Streaming recognition**: what you said before a pause is transcribed while
   you keep talking, so letting go of the key leaves only the last sentence or
-  two to recognize. A 20-second dictation is recognized in about a third of a
-  second after release instead of 0.7 s, with the same accuracy (`chttr bench`
+  two to recognize: a 20-second dictation is ready in about half the time of a
+  full pass (0.3 s instead of 0.7 s on a desktop CPU), with the same accuracy (`chttr bench`
   measures it on your machine).
 - **Wispr-style cleanup** with Claude Haiku (a few hundred milliseconds), or a
   local Ollama model: filler words removed, punctuation and casing fixed,
@@ -53,33 +54,61 @@ and writes meeting summaries.
 
 ## Install
 
-As an Omarchy plugin:
+**Omarchy**, as a plugin:
 
 ```bash
 omarchy plugin add https://github.com/robjobbed/chttr.git --enable
 ```
 
-Then click the microphone in the bar. That runs `bin/setup` in a terminal,
-which:
+Then click the microphone in the bar; that runs the setup in a terminal. Update
+later with `omarchy plugin update robjobbed.chttr`.
 
-1. installs the `chttr` command with [uv](https://docs.astral.sh/uv/)
-   (Python 3.14 by default, 3.12+ works; from this checkout, so `omarchy plugin update robjobbed.chttr`
-   brings new versions),
-2. downloads the speech model (Parakeet, ~670 MB, skipped if Omarchy's voxtype
-   already has it) and the meeting models (~29 MB),
-3. adds the keybindings below to `~/.config/hypr/bindings.lua` (if it has no
-   chttr bindings yet; a backup is kept),
-4. registers the Google Meet extension with Chromium,
-5. starts the daemon as a systemd user service (`chttr.service`).
-
-You can run it yourself too: `~/.config/omarchy/plugins/robjobbed.chttr/bin/setup`
-(`--no-keybindings`, `--no-meet`, `--no-service` to skip parts). After that:
+**Any other Linux desktop:**
 
 ```bash
-chttr doctor                     # engine, cleanup backend, daemon, calendar, Meet extension
+curl -fsSL https://raw.githubusercontent.com/robjobbed/chttr/main/install.sh | bash
 ```
 
-Without Omarchy's plugin system: clone the repo anywhere and run `bin/setup`.
+The installer never uses sudo: if a system tool is missing it prints the one
+command for your distribution (pacman, apt, dnf or zypper). Run it again to
+update. **Arch** users can also build `packaging/aur/chttr-git/PKGBUILD`.
+
+Either way, setup:
+
+1. installs the `chttr` command with [uv](https://docs.astral.sh/uv/) (Python
+   3.12+) from a git checkout, so updates are a `git pull` away,
+2. downloads the speech model (Parakeet, ~670 MB, skipped if Omarchy's voxtype
+   already has it) and the meeting models (~29 MB), checksum-verified,
+3. sets up the hotkeys for your desktop (below),
+4. registers the Google Meet extension with Chromium, Chrome, Brave, Vivaldi or Edge,
+5. starts the daemon as a systemd user service (`chttr.service`).
+
+Run it again any time (`bin/setup --no-keybindings --no-meet --no-service` skips
+parts), and check everything with:
+
+```bash
+chttr doctor                     # desktop, typing, hotkeys, engine, cleanup, daemon, calendar, Meet
+```
+
+### Desktop support
+
+| Desktop | Hotkeys | Typing | Focused app (per-app modes) | Overlay |
+|---|---|---|---|---|
+| Hyprland / Omarchy | compositor bindings (added by setup) | wtype | hyprctl | yes |
+| Sway | compositor bindings (added by setup) | wtype | swaymsg | yes |
+| niri, river, other wlroots | keyboard devices¹ | wtype | niri msg (niri) | yes |
+| KDE Plasma 6 (Wayland) | global-shortcuts portal | ydotool² | kdotool (optional) | yes |
+| GNOME 48+ (Wayland) | global-shortcuts portal | ydotool² | [Window Calls](https://github.com/ickyicky/window-calls) extension (optional) | notifications |
+| X11 (any) | keyboard devices¹ | xdotool | xdotool | notifications |
+
+¹ chttr reads `/dev/input` (it watches the keys, never blocks them); add yourself
+to the `input` group once: `sudo usermod -aG input $USER`, then log out and in.
+² `ydotool` needs its daemon: `systemctl --user enable --now ydotool`.
+
+On GNOME and KDE the desktop asks you once to confirm chttr's shortcuts; you can
+change them later in its keyboard settings. Elsewhere the keys come from
+`[hotkeys]` in the config. Without a typing tool, text is pasted, and without
+that it lands on the clipboard with a notification.
 
 | Key | What it does |
 |---|---|
@@ -107,8 +136,10 @@ leave `polish.backend = "auto"`; chttr uses Claude when a key is present, else
 Ollama when it is running, else no cleanup. Command mode needs one of the two;
 meeting summaries need Claude.
 
-System tools used: `pw-record`/`pw-play` (PipeWire), `wtype`, `wl-copy`/`wl-paste`,
-`notify-send`, `hyprctl`, `omarchy-menu-select`. All ship with Omarchy.
+System tools used: `pw-record`/`pw-play` (PipeWire) and `notify-send` everywhere;
+`wl-copy`/`wl-paste` on Wayland or `xclip`/`xsel` on X11; a typing tool from the
+table above; a menu (`omarchy-menu-select`, or `fuzzel`, `wofi`, `rofi`, `bemenu`).
+All of them ship with Omarchy.
 
 ## Personal dictionary and snippets
 

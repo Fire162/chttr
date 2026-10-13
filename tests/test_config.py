@@ -13,7 +13,7 @@ def test_default_config_parses_and_matches_the_dataclasses(tmp_path):
     assert not C.write_default_config(path)          # never overwrites
     cfg = C.load_config(path)
     defaults = C.Config(modes=C._default_modes())
-    for section in ("engine", "whisper", "audio", "output", "polish", "feedback", "history", "meeting"):
+    for section in ("engine", "whisper", "audio", "output", "polish", "feedback", "history", "hotkeys", "meeting"):
         assert getattr(cfg, section) == getattr(defaults, section), section
 
 

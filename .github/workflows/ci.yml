@@ -43,15 +43,36 @@ jobs:
       - run: uv sync --python ${{ matrix.python }} --group dev
       - run: uv run pytest -q
 
-  arch:
-    name: Tests (Arch Linux)
+  distros:
+    name: Tests (${{ matrix.name }})
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Arch Linux
+            image: archlinux:latest
+            setup: pacman -Syu --noconfirm --needed git curl python
+          - name: Debian 13
+            image: debian:trixie
+            setup: apt-get update -q && apt-get install -yq git curl python3 ca-certificates
+          - name: Fedora
+            image: fedora:latest
+            setup: dnf install -yq git curl python3
     steps:
-      - run: pacman -Syu --noconfirm --needed git uv python
+      - run: ${{ matrix.setup }}
       - uses: actions/checkout@v4
-      - run: uv sync --python /usr/bin/python3 --group dev
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --python "$(command -v python3)" --group dev
       - run: uv run pytest -q
+
+  shell:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck install.sh bin/setup bin/chttr-status
 
   build:
     name: Build

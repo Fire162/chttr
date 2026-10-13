@@ -1,0 +1,53 @@
+# Maintainer: Rob Behbahani <robjobbed at users dot noreply dot github dot com>
+#
+# chttr from git, installed into its own virtual environment in /opt/chttr (its
+# speech stack, onnx-asr, isn't packaged for Arch). Models are downloaded on
+# first `chttr setup`, checksum-verified.
+pkgname=chttr-git
+pkgver=0.5.0
+pkgrel=1
+pkgdesc="Voice dictation and meeting notes for Linux: local speech-to-text, Claude cleanup, speaker-named transcripts"
+arch=('x86_64' 'aarch64')
+url="https://github.com/robjobbed/chttr"
+license=('MIT')
+depends=('python' 'pipewire' 'libnotify' 'wl-clipboard')
+makedepends=('git' 'python-pip')
+optdepends=(
+  'wtype: typing on Hyprland, Sway, niri'
+  'ydotool: typing on GNOME and KDE'
+  'xdotool: typing on X11'
+  'gtk4-layer-shell: the floating waveform overlay'
+  'python-gobject: the floating waveform overlay'
+  'kdotool: per-app modes on KDE Plasma'
+  'fuzzel: menus outside Omarchy'
+  'ffmpeg: keep meeting audio as Opus'
+  'ollama: fully offline cleanup'
+)
+provides=('chttr')
+conflicts=('chttr')
+source=("$pkgname::git+https://github.com/robjobbed/chttr.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' \
+    || printf "0.4.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$pkgname"
+  python -m venv "$srcdir/venv"
+  "$srcdir/venv/bin/pip" install --quiet --no-cache-dir .
+}
+
+package() {
+  cd "$pkgname"
+  install -d "$pkgdir/opt"
+  cp -a "$srcdir/venv" "$pkgdir/opt/chttr"
+  # the venv was built in $srcdir; point its scripts at /opt/chttr
+  grep -rl "$srcdir/venv" "$pkgdir/opt/chttr/bin" | xargs sed -i "s|$srcdir/venv|/opt/chttr|g"
+  install -d "$pkgdir/usr/bin"
+  ln -s /opt/chttr/bin/chttr "$pkgdir/usr/bin/chttr"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

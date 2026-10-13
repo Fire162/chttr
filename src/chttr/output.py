@@ -1,43 +1,31 @@
-"""Deliver text to the focused window."""
+"""Deliver text to the focused window (through the desktop layer in desktop.py)."""
 
 from __future__ import annotations
 
-import json
+import functools
 import logging
 import subprocess
 import threading
 import time
 
+from . import desktop as DT
 from .config import OutputCfg
 
 log = logging.getLogger("chttr.output")
 
+_FAILURES = (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired, OSError)
+
+
+@functools.cache
+def current_desktop() -> DT.Desktop:
+    desk = DT.detect()
+    log.info("desktop: %s", desk.describe())
+    return desk
+
 
 def focused_window() -> tuple[str, str]:
-    """(class, title) of the active Hyprland window, or empty strings."""
-    try:
-        out = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=2)
-        data = json.loads(out.stdout or "{}")
-        return str(data.get("class") or data.get("initialClass") or ""), str(data.get("title") or "")
-    except Exception:  # noqa: BLE001 - best effort only
-        return "", ""
-
-
-def _paste(primary: bool = False) -> str:
-    cmd = ["wl-paste", "--no-newline"] + (["--primary"] if primary else [])
-    try:
-        out = subprocess.run(cmd, capture_output=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return out.stdout.decode(errors="replace") if out.returncode == 0 else ""
-
-
-def _clipboard_has_text() -> bool:
-    try:
-        types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=2).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return any(t.startswith("text/") or t in ("UTF8_STRING", "STRING", "TEXT") for t in types.split())
+    """(class, title) of the focused window, or empty strings."""
+    return DT.focused_window(current_desktop())
 
 
 def grab_selection(terminal: bool) -> str:
@@ -48,18 +36,21 @@ def grab_selection(terminal: bool) -> str:
     selection is never mistaken for a current one. A text clipboard is restored
     afterwards; an image on the clipboard is lost.
     """
+    desk = current_desktop()
     if terminal:
-        return _paste(primary=True)
-    saved = _paste() if _clipboard_has_text() else None
-    subprocess.run(["wl-copy", "--clear"], timeout=2, check=False)
+        return DT.clipboard_get(desk, primary=True)
+    saved = DT.clipboard_get(desk) if DT.clipboard_has_text(desk) else None
+    DT.clipboard_clear(desk)
+    selection = ""
     try:
-        subprocess.run(["hyprctl", "dispatch", "sendshortcut", "CTRL, C,"], capture_output=True, timeout=2, check=False)
-        selection = ""
+        DT.send_shortcut("ctrl+c", desk)
         for _ in range(8):           # the app answers asynchronously
             time.sleep(0.05)
-            selection = _paste()
+            selection = DT.clipboard_get(desk)
             if selection:
                 break
+    except _FAILURES as exc:
+        log.warning("could not copy the selection: %s", exc)
     finally:
         if saved:
             copy_to_clipboard(saved)
@@ -67,20 +58,17 @@ def grab_selection(terminal: bool) -> str:
 
 
 def copy_to_clipboard(text: str) -> None:
-    subprocess.run(["wl-copy", "--", text], check=True, timeout=5)
-
-
-def type_text(text: str) -> None:
-    subprocess.run(["wtype", "--", text], check=True, capture_output=True, timeout=60)
+    DT.clipboard_set(text, current_desktop())
 
 
 def paste_shortcut() -> None:
-    subprocess.run(["hyprctl", "dispatch", "sendshortcut", "CTRL, V,"], check=True, capture_output=True, timeout=5)
+    DT.send_shortcut("ctrl+v", current_desktop())
 
 
 def paste_preserving_clipboard(text: str, restore_after: float = 0.6) -> None:
     """Paste `text` with Ctrl+V, then put the clipboard back the way it was."""
-    saved = _paste() if _clipboard_has_text() else None
+    desk = current_desktop()
+    saved = DT.clipboard_get(desk) if DT.clipboard_has_text(desk) else None
     copy_to_clipboard(text)
     paste_shortcut()
     if saved is not None:
@@ -92,7 +80,7 @@ def paste_preserving_clipboard(text: str, restore_after: float = 0.6) -> None:
 def deliver(text: str, cfg: OutputCfg, mode: str = "", trailing_space: bool | None = None,
             allow_paste: bool = True) -> str:
     """Send text to the user. `mode`/`trailing_space` override cfg (per-app modes).
-    Returns the method actually used."""
+    Returns the method actually used: "type", "paste" or "clipboard"."""
     mode = mode or cfg.mode
     if (cfg.trailing_space if trailing_space is None else trailing_space) and not text.endswith(("\n", " ")):
         text += " "
@@ -100,7 +88,7 @@ def deliver(text: str, cfg: OutputCfg, mode: str = "", trailing_space: bool | No
         try:
             paste_preserving_clipboard(text)
             return "paste"
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        except _FAILURES as exc:
             log.warning("pasting failed (%s); typing instead", exc)
     if mode == "clipboard":
         copy_to_clipboard(text)
@@ -110,11 +98,18 @@ def deliver(text: str, cfg: OutputCfg, mode: str = "", trailing_space: bool | No
         paste_shortcut()
         return "paste"
     try:
-        type_text(text)
+        DT.type_text(text, current_desktop(), cfg.typer)
         return "type"
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        detail = getattr(exc, "stderr", b"") or b""
-        log.warning("wtype failed (%s); %s", detail.decode(errors="replace").strip() or exc, "copying to clipboard" if cfg.fallback_to_clipboard else "giving up")
+    except _FAILURES as exc:
+        detail = (getattr(exc, "stderr", b"") or b"")
+        detail = detail.decode(errors="replace") if isinstance(detail, bytes) else str(detail)
+        log.warning("typing failed (%s)", detail.strip() or exc)
+        if allow_paste:
+            try:
+                paste_preserving_clipboard(text)
+                return "paste"
+            except _FAILURES as exc2:
+                log.warning("pasting failed too (%s)", exc2)
         if not cfg.fallback_to_clipboard:
             raise
         copy_to_clipboard(text)

@@ -76,7 +76,7 @@ no_speech_timeout = 10
 speech_threshold_db = -38
 
 [output]
-# "type"      - type into the focused window with wtype
+# "type"      - type into the focused window (wtype, ydotool or xdotool; see typer)
 # "paste"     - copy to clipboard and send Ctrl+V to the focused window
 # "clipboard" - only copy to the clipboard
 mode = "type"
@@ -86,6 +86,9 @@ fallback_to_clipboard = true
 # pasted instead (your clipboard is restored right after). Not in terminals.
 # 0 = always type.
 paste_over = 400
+# Typing tool: "auto" (wtype on Hyprland/Sway/niri, ydotool on GNOME/KDE,
+# xdotool on X11), or "wtype" | "ydotool" | "xdotool" | "dotool"
+typer = "auto"
 
 [polish]
 # Wispr Flow-style cleanup: fillers removed, punctuation fixed, self-corrections
@@ -129,6 +132,22 @@ live_captions = true
 [history]
 # Append every dictation to ~/.local/share/chttr/history.jsonl
 enabled = true
+
+[hotkeys]
+# Who catches the keys:
+#   "auto"       - Hyprland/Sway: the compositor's bindings (chttr setup adds them);
+#                  GNOME 48+/KDE: the desktop's global-shortcuts portal (you confirm
+#                  the keys once, and can change them in the desktop's settings);
+#                  anything else: the keyboard devices (needs the "input" group)
+#   "compositor" | "portal" | "evdev" | "none"
+backend = "auto"
+# Keys for the portal and evdev backends ("" turns one off). Modifiers: Ctrl, Alt,
+# Shift, Super. Keys: Insert, Pause, ScrollLock, F1-F24, ...
+dictate = "Insert"
+command = "Alt+Insert"
+hands_free = "Super+Insert"
+history = "Super+Shift+Insert"
+meeting = "Super+Alt+Insert"
 
 [meeting]
 # Meeting transcripts (chttr meeting start / stop, or automatic with the Meet
@@ -232,6 +251,7 @@ class OutputCfg:
     trailing_space: bool = True
     fallback_to_clipboard: bool = True
     paste_over: int = 400
+    typer: str = "auto"
 
 
 @dataclass
@@ -262,6 +282,16 @@ class FeedbackCfg:
 @dataclass
 class HistoryCfg:
     enabled: bool = True
+
+
+@dataclass
+class HotkeysCfg:
+    backend: str = "auto"
+    dictate: str = "Insert"
+    command: str = "Alt+Insert"
+    hands_free: str = "Super+Insert"
+    history: str = "Super+Shift+Insert"
+    meeting: str = "Super+Alt+Insert"
 
 
 @dataclass
@@ -305,6 +335,7 @@ class Config:
     polish: PolishCfg = field(default_factory=PolishCfg)
     feedback: FeedbackCfg = field(default_factory=FeedbackCfg)
     history: HistoryCfg = field(default_factory=HistoryCfg)
+    hotkeys: HotkeysCfg = field(default_factory=HotkeysCfg)
     meeting: MeetingCfg = field(default_factory=MeetingCfg)
     modes: list[Mode] = field(default_factory=list)
 
@@ -340,7 +371,7 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
         return cfg
     with path.open("rb") as fh:
         data = tomllib.load(fh)
-    for section in ("engine", "whisper", "audio", "output", "polish", "feedback", "history", "meeting"):
+    for section in ("engine", "whisper", "audio", "output", "polish", "feedback", "history", "hotkeys", "meeting"):
         if isinstance(data.get(section), dict):
             _fill(getattr(cfg, section), data[section])
     if isinstance(data.get("modes"), list):
@@ -353,6 +384,10 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
         raise ValueError(f"engine.name must be parakeet or whisper (got {cfg.engine.name!r})")
     if cfg.meeting.auto not in ("ask", "always", "never"):
         raise ValueError(f"meeting.auto must be ask, always or never (got {cfg.meeting.auto!r})")
+    if cfg.hotkeys.backend not in ("auto", "compositor", "portal", "evdev", "none"):
+        raise ValueError(f"hotkeys.backend must be auto, compositor, portal, evdev or none (got {cfg.hotkeys.backend!r})")
+    if cfg.output.typer not in ("auto", "wtype", "ydotool", "xdotool", "dotool"):
+        raise ValueError(f"output.typer must be auto, wtype, ydotool, xdotool or dotool (got {cfg.output.typer!r})")
     if cfg.polish.backend not in ("auto", "claude", "ollama", "none"):
         raise ValueError(f"polish.backend must be auto, claude, ollama or none (got {cfg.polish.backend!r})")
     return cfg
