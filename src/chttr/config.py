@@ -17,6 +17,7 @@ RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{APP}-{os.getuid(
 SOCKET_PATH = RUNTIME_DIR / "chttr.sock"
 STATE_FILE = RUNTIME_DIR / "state"
 HISTORY_FILE = DATA_DIR / "history.jsonl"
+HISTORY_AUDIO_DIR = DATA_DIR / "history-audio"   # only with [history] keep_audio_days > 0
 MEETINGS_DATA_DIR = DATA_DIR / "meetings"        # per-meeting audio, events, intermediate results
 MEETING_STATE_FILE = RUNTIME_DIR / "meeting"     # present while a meeting is being recorded
 MODELS_DIR = DATA_DIR / "models"
@@ -74,6 +75,11 @@ auto_stop_silence = 1.5
 no_speech_timeout = 10
 # Levels above this (dBFS, per 20 ms chunk) count as speech
 speech_threshold_db = -38
+# Whisper mode: for dictating quietly (open office, someone asleep). Lowers the
+# speech threshold to -50 dB and boosts quiet recordings before recognition.
+whisper_mode = false
+# Double-tap the dictation key to switch to hands-free; tap once more to stop.
+double_tap = true
 
 [output]
 # "type"      - type into the focused window (wtype, ydotool or xdotool; see typer)
@@ -108,6 +114,19 @@ timeout_seconds = 20
 # status", "sounds good") are typed as recognized, without a model round trip.
 # The longest phrase that can skip cleanup, in words; 0 sends everything.
 quick_max_words = 4
+# How much the cleanup changes:
+#   "light"  - fillers, stutters, punctuation and capitals only; your words stay
+#   "medium" - also self-corrections, spoken formatting, obvious mis-hearings
+#   "high"   - also tightens wording and fixes grammar, like a careful editor
+#   "none"   - no cleanup (the raw transcript, after your dictionary)
+level = "medium"
+# Text around the cursor (read through the accessibility bus, AT-SPI) helps spell
+# names that are on screen:
+#   "local" - names near the cursor fix sound-alike words on this machine only
+#   "names" - also give those names to the cleanup model as spellings to keep
+#   "full"  - also send up to 600 characters before the cursor, for context
+#   "off"
+screen_context = "local"
 # Optional: file containing an Anthropic API key (chmod 600). Used when
 # ANTHROPIC_API_KEY is not in the daemon's environment.
 api_key_file = "~/.config/chttr/anthropic-api-key"
@@ -132,6 +151,12 @@ live_captions = true
 [history]
 # Append every dictation to ~/.local/share/chttr/history.jsonl
 enabled = true
+# Keep each dictation's audio this many days, to replay it (chttr history --play).
+# 0 = never keep audio.
+keep_audio_days = 0
+# A few seconds after typing, look at the text field again (AT-SPI, on this
+# machine). If you corrected a name chttr got wrong, offer to learn it.
+learn_from_edits = true
 
 [hotkeys]
 # Who catches the keys:
@@ -243,6 +268,13 @@ class AudioCfg:
     auto_stop_silence: float = 1.5
     no_speech_timeout: float = 10
     speech_threshold_db: float = -38
+    whisper_mode: bool = False
+    double_tap: bool = True
+
+    @property
+    def threshold_db(self) -> float:
+        """The speech threshold in effect (whisper mode lowers it)."""
+        return min(self.speech_threshold_db, -50.0) if self.whisper_mode else self.speech_threshold_db
 
 
 @dataclass
@@ -262,6 +294,8 @@ class PolishCfg:
     effort: str = "low"
     timeout_seconds: float = 20
     quick_max_words: int = 4
+    level: str = "medium"
+    screen_context: str = "local"
     api_key_file: str = "~/.config/chttr/anthropic-api-key"
     ollama_model: str = "llama3.2"
     ollama_url: str = "http://127.0.0.1:11434"
@@ -282,6 +316,8 @@ class FeedbackCfg:
 @dataclass
 class HistoryCfg:
     enabled: bool = True
+    keep_audio_days: int = 0
+    learn_from_edits: bool = True
 
 
 @dataclass
@@ -321,6 +357,11 @@ class Mode:
     polish: bool = True
     output: str = ""              # "" = use [output].mode
     trailing_space: bool | None = None
+    code: bool = False            # spoken file references ("at main dot py" -> @main.py)
+
+    @property
+    def is_code(self) -> bool:
+        return self.code or self.name in ("code", "terminal")
 
     def matches(self, window_class: str) -> bool:
         return any(re.search(p, window_class, re.IGNORECASE) for p in self.match)
@@ -388,6 +429,10 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
         raise ValueError(f"hotkeys.backend must be auto, compositor, portal, evdev or none (got {cfg.hotkeys.backend!r})")
     if cfg.output.typer not in ("auto", "wtype", "ydotool", "xdotool", "dotool"):
         raise ValueError(f"output.typer must be auto, wtype, ydotool, xdotool or dotool (got {cfg.output.typer!r})")
+    if cfg.polish.level not in ("none", "light", "medium", "high"):
+        raise ValueError(f"polish.level must be none, light, medium or high (got {cfg.polish.level!r})")
+    if cfg.polish.screen_context not in ("off", "local", "names", "full"):
+        raise ValueError(f"polish.screen_context must be off, local, names or full (got {cfg.polish.screen_context!r})")
     if cfg.polish.backend not in ("auto", "claude", "ollama", "none"):
         raise ValueError(f"polish.backend must be auto, claude, ollama or none (got {cfg.polish.backend!r})")
     return cfg

@@ -13,7 +13,7 @@ meeting notes, with names next to every line.
 Speech recognition runs on your machine. Claude (optional) tidies dictation
 and writes meeting summaries.
 
-> **Early release (0.5).** Built and used daily on an Omarchy 4 laptop. The
+> **Early release (0.6).** Built and used daily on an Omarchy 4 laptop. The
 > logic is covered by a test suite that runs in CI on every change; the Google
 > Meet extension has been used in few real calls so far. Issues and fixes
 > welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -29,15 +29,29 @@ and writes meeting summaries.
 - **Wispr-style cleanup** with Claude Haiku (a few hundred milliseconds), or a
   local Ollama model: filler words removed, punctuation and casing fixed,
   self-corrections applied ("Tuesday, no, Wednesday"), spoken formatting
-  honoured. Short, clean phrases skip the round trip entirely. Falls back to
-  the raw transcript if no model is available.
+  honoured. Four levels, from `light` (your exact words, punctuated) to `high`
+  (edited like a careful editor). Short, clean phrases skip the round trip
+  entirely. Falls back to the raw transcript if no model is available.
+- **Developer dictation**: "camel case user id" types `userId` (snake, kebab,
+  Pascal and constant case too), and in editors and terminals "at main dot
+  py" types `@main.py` for Claude Code, Cursor and Aider.
+- **Names from the screen**: words near the cursor (read locally through the
+  accessibility bus) fix sound-alike names, so "Priyanca" comes out as the
+  "Priyanka" in the email you're replying to. Nothing extra leaves your machine
+  unless you ask it to (`[polish] screen_context`).
+- **Learns from your corrections**: change a name chttr got wrong and it offers
+  to remember the spelling.
 - **Per-app modes**: terminals get one plain line with no trailing period, code
   editors keep identifiers, chat apps stay casual, email and docs get full
   sentences. A config table matched against the focused window's class.
 - **Command mode**: select text, hold Alt+Insert, say "make this shorter" or
   "turn this into bullet points", let go: the selection is replaced.
-- **Hands-free**: Super+Insert starts a recording that stops by itself after a
-  pause (1.5 s by default).
+- **Hands-free**: Super+Insert, or double-tap Insert, starts a recording that
+  stops by itself after a pause (1.5 s by default) or on the next tap.
+- **Whisper mode**: dictate quietly; chttr lowers its speech threshold and
+  boosts the audio before recognition.
+- **25 languages**: Parakeet recognizes English and 24 European languages and
+  picks the language by itself; the cleanup keeps whatever language you spoke.
 - **Live captions**: the floating waveform pill shows the words as you speak.
 - **Personal dictionary and snippets**: names that stick forever, and phrases
   like "insert my email" that expand to saved text. `chttr fix` learns from the
@@ -48,8 +62,9 @@ and writes meeting summaries.
   Markdown notes in the style you choose (general, BANT, MEDDPICC, 1:1,
   standup, interview, retro and more, or your own), switchable after the call.
   Everything but the notes runs locally.
-- **History and stats**: a picker to re-type any past dictation; words per day,
-  speaking speed and time saved.
+- **History and stats**: a picker to re-type any past dictation, optional audio
+  replay, words per day, speaking speed and time saved. `chttr doctor --mic`
+  checks your microphone end to end.
 - Auto-unmute of the mic, sounds, notifications, a state file for the bar.
 
 ## Install
@@ -387,12 +402,16 @@ when you turn it on:
 | Focused app's window class (e.g. `Slack`) | Same, with the dictation | Cleanup is on | `[polish] use_app_context = false` |
 | Focused window's title | Same, with the dictation | Cleanup is on | `[polish] send_window_title = false` |
 | Selected text in command mode | Same | You use command mode | Don't use command mode |
+| Names near the cursor | Same, as spellings to keep | `[polish] screen_context = "names"` or `"full"` (default `"local"`: used on this machine only) | `"local"` or `"off"` |
+| Up to 600 characters before the cursor | Same, as context | `[polish] screen_context = "full"` | Any other value |
 | Meeting transcript, invitees' names and emails, calendar title and description | Anthropic | You added an API key | `[meeting] summary = false` |
 | Calendar feed request | Google | You added a secret iCal address | Remove it from `calendar-urls` |
 | Model downloads (once, checksum-verified) | Hugging Face | `chttr setup` | Copy the models in by hand |
 
-Meeting audio is deleted once the notes are written unless you set
-`keep_audio = true`. Dictation history, meeting data and remembered voices stay
+Reading the text field (for names on screen and to notice your corrections)
+happens on this machine through AT-SPI and is never stored. Meeting audio is
+deleted once the notes are written unless you set `keep_audio = true`, and
+dictation audio is only kept with `[history] keep_audio_days`. Dictation history, meeting data and remembered voices stay
 in `~/.local/share/chttr`, readable only by you. The Meet extension talks only
 to the local daemon. Your calendar's secret iCal URL is stored with mode 600.
 To report a security problem, see [SECURITY.md](SECURITY.md).

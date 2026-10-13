@@ -19,13 +19,16 @@ class FakeRecorder:
         self.peak_db = -12.0
         self.elapsed = 0.0
         self.device = device
+        self.secs = 1.0              # length of the next recording
+        self.levels_db: list[float] = []
+        self.chunk_count = 0
 
     def start(self):
         self.active = True
 
     def stop(self):
         self.active = False
-        return np.zeros(16000, dtype=np.float32), 1.0
+        return np.zeros(int(16000 * self.secs), dtype=np.float32), self.secs
 
     def cancel(self):
         self.active = False
@@ -71,6 +74,7 @@ def daemon(monkeypatch):
     monkeypatch.setattr(Dm, "deliver", lambda text, cfg, **kw: typed.append(text) or "type")
     monkeypatch.setattr(Dm, "focused_window", lambda: ("kitty", "~"))
     monkeypatch.setattr(Dm, "grab_selection", lambda terminal: "")
+    monkeypatch.setattr(Dm.CX, "read_field", lambda *a, **k: None)
     cfg = C.Config(modes=C._default_modes())
     cfg.audio.unmute = False
     cfg.feedback.overlay = False
@@ -165,3 +169,79 @@ def test_command_mode_without_a_model_explains_itself(daemon):
 
 def test_unknown_command(daemon):
     assert daemon.handle("dance")["ok"] is False
+
+
+def test_double_tap_starts_hands_free_and_a_tap_stops_it(daemon):
+    daemon.transcriber.texts = ["", "long hands free dictation"]
+    daemon.recorder.secs = 0.2
+    daemon.handle("start")
+    daemon.handle("release")                                   # a quick tap
+    wait_idle(daemon)
+    assert daemon.handle("start")["kind"] == Dm.HANDSFREE      # second tap: hands-free
+    assert "ignoring" in daemon.handle("release")["message"]
+    daemon.recorder.secs = 4.0
+    daemon.handle("start")                                     # a tap ends it
+    wait_idle(daemon)
+    assert daemon.typed == ["long hands free dictation"]
+    assert not any("No speech" in n for n in daemon.feedback.notes)   # the tap itself is silent
+
+
+def test_double_tap_can_be_turned_off(daemon):
+    daemon.cfg.audio.double_tap = False
+    daemon.recorder.secs = 0.2
+    daemon.handle("start")
+    daemon.handle("release")
+    wait_idle(daemon)
+    assert daemon.handle("start")["kind"] == Dm.PTT
+
+
+def test_dev_mode_in_code_editors(daemon, monkeypatch):
+    monkeypatch.setattr(Dm, "focused_window", lambda: ("code-oss", "main.py - project"))
+    daemon.transcriber.texts = ["Open at main dot py and rename camel case user id."]
+    daemon.handle("start")
+    daemon.handle("release")
+    wait_idle(daemon)
+    assert daemon.typed == ["Open @main.py and rename userId."]
+
+
+def test_level_none_skips_cleanup(daemon, monkeypatch):
+    calls = []
+    monkeypatch.setattr(Dm.P, "backend", lambda cfg: "claude")
+    monkeypatch.setattr(Dm.P, "polish", lambda *a, **k: calls.append(a) or "polished")
+    daemon.cfg.polish.level = "none"
+    daemon.transcriber.texts = ["um this is a longer sentence that would normally be cleaned"]
+    daemon.handle("start")
+    daemon.handle("release")
+    wait_idle(daemon)
+    assert calls == [] and daemon.typed[0].startswith("um this")
+
+
+def test_names_on_screen_fix_sound_alikes(daemon, monkeypatch):
+    field = Dm.CX.Field("Mail", "Hi team, as discussed with Priyanka yesterday, ", "")
+    monkeypatch.setattr(Dm.CX, "read_field", lambda *a, **k: field)
+    daemon.transcriber.texts = ["Priyanca will send it"]
+    daemon.handle("start")
+    daemon.handle("release")
+    wait_idle(daemon)
+    assert daemon.typed == ["Priyanka will send it"]
+
+
+def test_learn_from_edits_offers_and_learns(daemon, monkeypatch, tmp_path):
+    from chttr import dictionary
+
+    monkeypatch.setattr(dictionary, "DICTIONARY_FILE", tmp_path / "d.toml")
+    monkeypatch.setattr(Dm.Dictionary.load.__func__, "__defaults__", (tmp_path / "d.toml",))
+    monkeypatch.setattr(Dm.Dictionary.save, "__defaults__", (tmp_path / "d.toml",))
+    field = Dm.CX.Field("Mail", "Please send the contract to Sohrab by Friday.", "")
+    monkeypatch.setattr(Dm.CX, "read_field", lambda *a, **k: field)
+
+    class Out:
+        stdout = "learn\n"
+
+    asked = []
+    monkeypatch.setattr(Dm.subprocess, "run", lambda cmd, **k: asked.append(cmd) or Out())
+    daemon._learn_from_edits("Please send the contract to Sorov by Friday.")
+    assert asked and "Sohrab" in asked[0][-2]
+    assert dictionary.Dictionary.load(tmp_path / "d.toml").replacements == {"sorov": "Sohrab"}
+    daemon._learn_from_edits("Please send the contract to Sorov by Friday.")
+    assert len(asked) == 1                                      # offered once per session
