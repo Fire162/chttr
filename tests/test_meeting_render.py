@@ -55,7 +55,7 @@ def result() -> dict:
 
 def test_render_writes_frontmatter_notes_transcript_and_speakers(tmp_path, cfg, result):
     md = render.render(tmp_path, result, cfg)
-    text = md.read_text()
+    text = md.read_text(encoding="utf-8")
     assert md.name.endswith("Pricing call.md")
     assert text.startswith("---\ntitle: \"Pricing call\"")
     assert 'meet: "https://meet.google.com/abc-defg-hij"' in text
@@ -105,9 +105,9 @@ def test_rename_updates_the_notes_and_remembers_the_voice(tmp_path, cfg, result,
 
     md = edit.rename(directory, "Speaker 1", "Ali", "ali@x.com", cfg)
 
-    saved = json.loads((directory / "result.json").read_text())
+    saved = json.loads((directory / "result.json").read_text(encoding="utf-8"))
     assert "Ali" in saved["speakers"]
-    assert "**Ali** · 00:00:10" in md.read_text()
+    assert "**Ali** · 00:00:10" in md.read_text(encoding="utf-8")
     assert "ali@x.com" in remembered
 
 

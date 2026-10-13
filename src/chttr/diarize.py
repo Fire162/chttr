@@ -160,7 +160,7 @@ class Voice:
 def load_voices(path: Path = VOICES_FILE) -> dict[str, Voice]:
     if not path.exists():
         return {}
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     return {k: Voice(k, v.get("name", ""), v.get("email", ""), np.array(v["embedding"], dtype=np.float32),
                      int(v.get("count", 1)), v.get("updated", ""))
             for k, v in data.items()}
@@ -171,7 +171,7 @@ def save_voices(voices: dict[str, Voice], path: Path = VOICES_FILE) -> None:
     data = {k: {"name": v.name, "email": v.email, "embedding": [round(float(x), 5) for x in v.embedding],
                 "count": v.count, "updated": v.updated} for k, v in sorted(voices.items())}
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1))
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
     os.chmod(tmp, 0o600)
     tmp.replace(path)
 

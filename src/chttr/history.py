@@ -18,7 +18,7 @@ def load() -> list[dict]:
     if not HISTORY_FILE.exists():
         return []
     entries = []
-    for line in HISTORY_FILE.read_text().splitlines():
+    for line in HISTORY_FILE.read_text(encoding="utf-8").splitlines():
         try:
             e = json.loads(line)
         except json.JSONDecodeError:

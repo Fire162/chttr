@@ -62,6 +62,55 @@ def test_command_includes_the_selection_and_rejects_empty_results(monkeypatch):
         P.command("write a haiku", "", PolishCfg())
 
 
+@pytest.mark.parametrize("text", ["git status", "Sounds good.", "Ship it", "Thanks, Dana."])
+def test_quick_path_takes_short_clean_phrases(text):
+    assert P.quick_path(text, 4)
+
+
+@pytest.mark.parametrize("text", [
+    "um ship it",                                   # filler
+    "send it Tuesday, actually Wednesday",          # self-correction
+    "yes comma do it",                              # spoken punctuation
+    "the the plan",                                 # stutter
+    "insert my email",                              # snippet trigger
+    "this one is clearly longer than four words",
+    "",
+])
+def test_quick_path_sends_everything_else_to_the_model(text):
+    assert not P.quick_path(text, 4)
+
+
+def test_quick_path_can_be_turned_off():
+    assert not P.quick_path("ok", 0)
+
+
+def test_haiku_cleanup_turns_thinking_off_and_skips_fallbacks():
+    params = P.claude_request("claude-haiku-5-5", "low", "SYSTEM", "USER")
+    assert params["thinking"] == {"type": "disabled"}
+    assert "betas" not in params and "fallbacks" not in params
+    assert params["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert params["output_config"] == {"effort": "low"}
+
+
+def test_opus_keeps_server_side_fallbacks_and_adaptive_thinking():
+    params = P.claude_request("claude-opus-5-5", "low", "SYSTEM", "USER")
+    assert params["betas"] == ["server-side-fallback-2026-07-01"]
+    assert params["fallbacks"] == "default"
+    assert "thinking" not in params
+
+
+def test_clients_are_reused(monkeypatch, tmp_path):
+    import anthropic
+
+    made = []
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: made.append(kw) or object())
+    P._clients.clear()
+    cfg = PolishCfg(api_key_file=str(tmp_path / "none"))
+    assert P.client(cfg) is P.client(cfg)
+    assert P.client(cfg, timeout=600) is not P.client(cfg)
+    assert len(made) == 2
+
+
 def test_no_backend_raises(monkeypatch):
     monkeypatch.setattr(P, "backend", lambda cfg: "none")
     with pytest.raises(P.PolishUnavailable):

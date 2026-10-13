@@ -198,7 +198,7 @@ class Dictionary:
         lines += ["", "# snippets: say the phrase (optionally after \"insert\") to type the expansion", "[snippets]"]
         for phrase, expansion in sorted(self.snippets.items()):
             lines.append(f"{_q(phrase)} = {_q(expansion)}")
-        path.write_text("\n".join(lines) + "\n")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 _TOML_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "\r": "\\r"}

@@ -84,7 +84,7 @@ def _comment_out_autostart(exe: str) -> None:
         path = HYPR / name
         if not path.exists():
             continue
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         changed = False
         for i, line in enumerate(lines):
             s = line.strip()
@@ -93,13 +93,13 @@ def _comment_out_autostart(exe: str) -> None:
                 changed = True
         if changed:
             shutil.copy2(path, path.with_name(path.name + ".bak-chttr"))
-            path.write_text("\n".join(lines) + "\n")
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             _say(f"commented out the old chttr daemon line in {path}")
 
 
 def service(exe: str) -> None:
     UNIT.parent.mkdir(parents=True, exist_ok=True)
-    UNIT.write_text(UNIT_TEXT.format(exe=exe))
+    UNIT.write_text(UNIT_TEXT.format(exe=exe), encoding="utf-8")
     _comment_out_autostart(exe)
     if C.SOCKET_PATH.exists():
         subprocess.run([exe, "quit"], capture_output=True, check=False)     # a daemon started some other way
@@ -116,12 +116,12 @@ def keybindings(exe: str) -> None:
     if target is None:
         _say("keybindings: no ~/.config/hypr/bindings.lua or bindings.conf; see the README to add them")
         return
-    text = target.read_text()
+    text = target.read_text(encoding="utf-8")
     if "chttr" in text:
         _say(f"keybindings: {target} already has chttr bindings; left alone")
         return
     shutil.copy2(target, target.with_name(target.name + ".bak-chttr"))
-    target.write_text(text.rstrip("\n") + "\n" + block.format(exe=exe))
+    target.write_text(text.rstrip("\n") + "\n" + block.format(exe=exe), encoding="utf-8")
     subprocess.run(["hyprctl", "reload"], capture_output=True, check=False)
     _say(f"keybindings: added to {target} (Insert, Alt/Super+Insert, Super+Alt+Insert)")
 

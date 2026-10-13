@@ -23,6 +23,7 @@ from .feedback import Feedback
 from .meeting import Session, launch_processing
 from .output import deliver, focused_window, grab_selection
 from .recorder import Recorder
+from .streaming import Streamer
 from .transcriber import Transcriber, engine_key
 
 log = logging.getLogger("chttr.daemon")
@@ -63,6 +64,7 @@ class Daemon:
         self.last_speech = 0.0
         self.captions_stop: threading.Event | None = None
         self.captions_thread: threading.Thread | None = None
+        self.streamer: Streamer | None = None
         # meetings
         self.meeting: Session | None = None
         self.call: dict | None = None           # the Meet call the extension says we're in
@@ -105,7 +107,7 @@ class Daemon:
     def _write_state(self, state: str) -> None:
         self.state = state
         tmp = C.STATE_FILE.with_suffix(".tmp")
-        tmp.write_text(state)
+        tmp.write_text(state, encoding="utf-8")
         os.replace(tmp, C.STATE_FILE)
 
     # ---- overlay -----------------------------------------------------------
@@ -164,9 +166,18 @@ class Daemon:
         except (OSError, subprocess.TimeoutExpired):
             proc.kill()
 
-    # ---- live captions -----------------------------------------------------
+    # ---- streaming recognition / live captions ----------------------------
     def _captions_start(self) -> None:
-        if not (self.cfg.feedback.live_captions and self.cfg.feedback.overlay):
+        captions = self.cfg.feedback.live_captions and self.cfg.feedback.overlay
+        if self.cfg.engine.streaming:
+            prompt = Dictionary.load().whisper_prompt()
+            self.streamer = Streamer(
+                self.recorder, lambda audio: self.transcriber.transcribe(audio, prompt),
+                self.cfg.audio.speech_threshold_db,
+                on_caption=(lambda text: self._overlay_send("caption " + text)) if captions else None,
+            ).start()
+            return
+        if not captions:
             return
         self.captions_stop = threading.Event()
         self.captions_thread = threading.Thread(target=self._captions_loop, args=(self.captions_stop,), daemon=True)
@@ -187,8 +198,12 @@ class Daemon:
             if not stop.is_set() and text:
                 self._overlay_send("caption " + text)
 
-    def _captions_detach(self) -> threading.Thread | None:
-        """Tell this recording's caption loop to stop; returns its thread to join."""
+    def _captions_detach(self) -> threading.Thread | Streamer | None:
+        """Tell this recording's caption loop to stop; returns its thread to join (or
+        the streamer that has already recognized part of the recording)."""
+        if self.streamer is not None:
+            streamer, self.streamer = self.streamer, None
+            return streamer
         stop, thread = self.captions_stop, self.captions_thread
         self.captions_stop = self.captions_thread = None
         if stop:
@@ -297,7 +312,7 @@ class Daemon:
             self.feedback.notify("chttr: can't record the meeting", str(exc), urgency="critical", timeout_ms=8000)
             return {"ok": False, "state": self.state, "error": str(exc)}
         self.meeting = session
-        C.MEETING_STATE_FILE.write_text(json.dumps({"title": title, "code": code, "started": session.recorder.started}))
+        C.MEETING_STATE_FILE.write_text(json.dumps({"title": title, "code": code, "started": session.recorder.started}), encoding="utf-8")
         log.info("meeting recording started in %s", session.dir)
         self.feedback.play("start")
         self.feedback.notify("Recording meeting" + (f": {title}" if title else ""),
@@ -474,7 +489,9 @@ class Daemon:
         self._overlay_close()
         self._restore_mute_state()
         self._refresh_state()
-        self._captions_detach()
+        detached = self._captions_detach()
+        if isinstance(detached, Streamer):
+            detached.abort()
         self.feedback.play("error")
         self.feedback.notify("Dictation cancelled", timeout_ms=1500)
         return {"ok": True, "state": self.state}
@@ -491,17 +508,24 @@ class Daemon:
             self.delivery.notify_all()
 
     def _process(self, seq: int, audio: np.ndarray, secs: float, peak_db: float, kind: str,
-                 app: str, title: str, selection: str, captions: threading.Thread | None) -> None:
+                 app: str, title: str, selection: str, captions: threading.Thread | Streamer | None) -> None:
         raw = text = ""
         method = ""
         mode: Mode | None = None
         try:
-            if captions:
-                captions.join(timeout=5)   # let an in-flight caption pass finish first
             t0 = time.monotonic()
             dictionary = Dictionary.load()
-            raw = self.transcriber.transcribe(audio, dictionary.whisper_prompt())
-            log.info("%s %.1fs audio (peak %.0f dB) -> %.2fs: %r",
+            if isinstance(captions, Streamer):
+                try:
+                    raw = captions.finish(audio)
+                except Exception:  # fall back to one pass over everything
+                    log.exception("streaming recognition failed; transcribing the whole recording")
+                    raw = self.transcriber.transcribe(audio, dictionary.whisper_prompt())
+            else:
+                if captions:
+                    captions.join(timeout=5)   # let an in-flight caption pass finish first
+                raw = self.transcriber.transcribe(audio, dictionary.whisper_prompt())
+            log.info("%s %.1fs audio (peak %.0f dB) -> %.2fs after release: %r",
                      self.transcriber.engine.name, secs, peak_db, time.monotonic() - t0, raw)
             if not raw:
                 self._no_speech(secs, peak_db)
@@ -520,7 +544,8 @@ class Daemon:
             self._wait_turn(seq)
             method = deliver(text, self.cfg.output,
                              mode=(mode.output if mode else ""),
-                             trailing_space=False if kind == COMMAND else (mode.trailing_space if mode else None))
+                             trailing_space=False if kind == COMMAND else (mode.trailing_space if mode else None),
+                             allow_paste=not (mode and mode.name == "terminal"))
             label = "Replaced" if kind == COMMAND and selection else "Typed"
             if method == "clipboard":
                 self.feedback.notify("Copied to clipboard", text[:200], timeout_ms=4000)
@@ -548,6 +573,12 @@ class Daemon:
 
     def _polish(self, text: str, app: str, title: str, mode: Mode | None, dictionary: Dictionary) -> str:
         if mode and not mode.polish:
+            return text
+        if P.quick_path(text, self.cfg.polish.quick_max_words):
+            # Nothing for a model to fix. Terminals and editors still get no trailing period.
+            if mode and mode.trailing_space is False and text.endswith(".") and not text.endswith(".."):
+                text = text[:-1]
+            log.info("short and clean; typed without a model round trip")
             return text
         if P.backend(self.cfg.polish) == "none":
             return text
@@ -670,6 +701,7 @@ class Daemon:
         signal.signal(signal.SIGTERM, on_signal)
         signal.signal(signal.SIGINT, on_signal)
         threading.Thread(target=self._watchdog, daemon=True).start()
+        threading.Thread(target=P.warm, args=(self.cfg.polish,), daemon=True).start()
         log.info("listening on %s (cleanup backend: %s)", sock_path, P.backend(self.cfg.polish))
         try:
             while not self._stop.is_set():

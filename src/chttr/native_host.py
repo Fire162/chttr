@@ -54,7 +54,7 @@ def run() -> int:
 
 def extension_id() -> str:
     """Chromium derives an unpacked extension's ID from the manifest's public key."""
-    key = json.loads((EXTENSION_DIR / "manifest.json").read_text())["key"]
+    key = json.loads((EXTENSION_DIR / "manifest.json").read_text(encoding="utf-8"))["key"]
     digest = hashlib.sha256(base64.b64decode(key)).hexdigest()[:32]
     return "".join(chr(ord("a") + int(c, 16)) for c in digest)
 
@@ -66,7 +66,7 @@ def _chttr_command() -> str:
 
 def _is_chttr_extension(path: Path) -> bool:
     try:
-        return json.loads((path / "manifest.json").read_text()).get("name") == "chttr for Google Meet"
+        return json.loads((path / "manifest.json").read_text(encoding="utf-8")).get("name") == "chttr for Google Meet"
     except (OSError, ValueError):
         return path.name == "extension" and "chttr" in str(path)
 
@@ -74,7 +74,7 @@ def _is_chttr_extension(path: Path) -> bool:
 def _add_load_extension(flags: Path, ext: str) -> str:
     """Add the extension to the browser's --load-extension flag (Omarchy loads its
     own extensions the same way). Returns what was done."""
-    lines = flags.read_text().splitlines() if flags.exists() else []
+    lines = flags.read_text(encoding="utf-8").splitlines() if flags.exists() else []
     for i, line in enumerate(lines):
         if line.strip().startswith("--load-extension="):
             paths = line.strip().split("=", 1)[1].split(",")
@@ -84,12 +84,12 @@ def _add_load_extension(flags: Path, ext: str) -> str:
             paths = [x for x in paths if not _is_chttr_extension(Path(x))]
             backup = flags.with_name(flags.name + ".bak-chttr")
             if not backup.exists():
-                backup.write_text("\n".join(lines) + "\n")
+                backup.write_text("\n".join(lines) + "\n", encoding="utf-8")
             lines[i] = "--load-extension=" + ",".join(paths + [ext])
-            flags.write_text("\n".join(lines) + "\n")
+            flags.write_text("\n".join(lines) + "\n", encoding="utf-8")
             return f"added to {flags}"
     lines.append(f"--load-extension={ext}")
-    flags.write_text("\n".join(lines) + "\n")
+    flags.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return f"added to {flags}"
 
 
@@ -97,7 +97,7 @@ def install() -> list[str]:
     done = []
     wrapper = C.DATA_DIR / "native-host"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
-    wrapper.write_text(f"#!/bin/sh\n# Started by the browser for the chttr Meet extension.\n{_chttr_command()}\n")
+    wrapper.write_text(f"#!/bin/sh\n# Started by the browser for the chttr Meet extension.\n{_chttr_command()}\n", encoding="utf-8")
     wrapper.chmod(0o755)
     manifest = {
         "name": HOST_NAME,
@@ -111,7 +111,7 @@ def install() -> list[str]:
             continue
         hosts = config_dir / "NativeMessagingHosts"
         hosts.mkdir(exist_ok=True)
-        (hosts / f"{HOST_NAME}.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        (hosts / f"{HOST_NAME}.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         done.append(f"native host registered for {config_dir.name}")
         done.append(f"extension {_add_load_extension(flags, str(EXTENSION_DIR))}")
     return done

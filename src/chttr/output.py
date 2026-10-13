@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import threading
 import time
 
 from .config import OutputCfg
@@ -77,12 +78,30 @@ def paste_shortcut() -> None:
     subprocess.run(["hyprctl", "dispatch", "sendshortcut", "CTRL, V,"], check=True, capture_output=True, timeout=5)
 
 
-def deliver(text: str, cfg: OutputCfg, mode: str = "", trailing_space: bool | None = None) -> str:
+def paste_preserving_clipboard(text: str, restore_after: float = 0.6) -> None:
+    """Paste `text` with Ctrl+V, then put the clipboard back the way it was."""
+    saved = _paste() if _clipboard_has_text() else None
+    copy_to_clipboard(text)
+    paste_shortcut()
+    if saved is not None:
+        timer = threading.Timer(restore_after, copy_to_clipboard, args=(saved,))
+        timer.daemon = True
+        timer.start()
+
+
+def deliver(text: str, cfg: OutputCfg, mode: str = "", trailing_space: bool | None = None,
+            allow_paste: bool = True) -> str:
     """Send text to the user. `mode`/`trailing_space` override cfg (per-app modes).
     Returns the method actually used."""
     mode = mode or cfg.mode
     if (cfg.trailing_space if trailing_space is None else trailing_space) and not text.endswith(("\n", " ")):
         text += " "
+    if mode == "type" and allow_paste and cfg.paste_over and len(text) > cfg.paste_over:
+        try:
+            paste_preserving_clipboard(text)
+            return "paste"
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            log.warning("pasting failed (%s); typing instead", exc)
     if mode == "clipboard":
         copy_to_clipboard(text)
         return "clipboard"

@@ -47,6 +47,10 @@ name = "parakeet"
 parakeet_dir = ""
 # 0 = auto (half the logical CPUs)
 threads = 0
+# Recognize while you talk: every pause is transcribed in the background, so
+# releasing the key leaves only the last second or so to do. false = one pass
+# over the whole recording after release.
+streaming = true
 
 [whisper]
 # ggml model name (tiny, base, base.en, small, small.en, medium, large-v3-turbo, ...)
@@ -78,6 +82,10 @@ speech_threshold_db = -38
 mode = "type"
 trailing_space = true
 fallback_to_clipboard = true
+# Typing goes character by character; text longer than this many characters is
+# pasted instead (your clipboard is restored right after). Not in terminals.
+# 0 = always type.
+paste_over = 400
 
 [polish]
 # Wispr Flow-style cleanup: fillers removed, punctuation fixed, self-corrections
@@ -86,9 +94,17 @@ fallback_to_clipboard = true
 #                     running, else no cleanup
 #          "claude" | "ollama" | "none"
 backend = "auto"
+# Dictation cleanup and command mode. Haiku answers in a few hundred milliseconds,
+# which is what makes dictation feel instant; any Claude model id works here.
+cleanup_model = "claude-haiku-5-5"
+# Meeting notes (and cleanup, if cleanup_model = "")
 model = "claude-opus-5-5"
 effort = "low"
 timeout_seconds = 20
+# Short phrases with no fillers, self-corrections or spoken punctuation ("git
+# status", "sounds good") are typed as recognized, without a model round trip.
+# The longest phrase that can skip cleanup, in words; 0 sends everything.
+quick_max_words = 4
 # Optional: file containing an Anthropic API key (chmod 600). Used when
 # ANTHROPIC_API_KEY is not in the daemon's environment.
 api_key_file = "~/.config/chttr/anthropic-api-key"
@@ -190,6 +206,7 @@ class EngineCfg:
     name: str = "parakeet"
     parakeet_dir: str = ""
     threads: int = 0
+    streaming: bool = True
 
 
 @dataclass
@@ -214,14 +231,17 @@ class OutputCfg:
     mode: str = "type"
     trailing_space: bool = True
     fallback_to_clipboard: bool = True
+    paste_over: int = 400
 
 
 @dataclass
 class PolishCfg:
     backend: str = "auto"
+    cleanup_model: str = "claude-haiku-5-5"
     model: str = "claude-opus-5-5"
     effort: str = "low"
     timeout_seconds: float = 20
+    quick_max_words: int = 4
     api_key_file: str = "~/.config/chttr/anthropic-api-key"
     ollama_model: str = "llama3.2"
     ollama_url: str = "http://127.0.0.1:11434"
@@ -343,7 +363,7 @@ def write_default_config(path: Path = CONFIG_FILE) -> bool:
     if path.exists():
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(DEFAULT_CONFIG)
+    path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     return True
 
 

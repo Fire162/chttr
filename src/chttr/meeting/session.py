@@ -38,7 +38,7 @@ class Session:
 
     def start(self) -> None:
         self.recorder.start()
-        self._events = (self.dir / "events.jsonl").open("a")
+        self._events = (self.dir / "events.jsonl").open("a", encoding="utf-8")
         self.save_meta(status="recording")
 
     def save_meta(self, **extra) -> None:

@@ -102,6 +102,25 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bench(args: argparse.Namespace) -> int:
+    """Time recognition (full pass vs. streaming), cleanup and accuracy on WAV files."""
+    logging.basicConfig(level=logging.WARNING)
+    from . import bench
+
+    cfg = C.load_config()
+    if args.engine:
+        cfg.engine.name = args.engine
+    files = [Path(f) for f in args.files]
+    missing = [str(f) for f in files if not f.is_file()]
+    if missing:
+        print(f"no such file: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    load_ms, results = bench.run(files, cfg, runs=args.runs, cleanup=args.cleanup)
+    out = {"json": bench.to_json, "markdown": bench.markdown}.get(args.format, bench.report)
+    print(out(cfg.engine.name, load_ms, results))
+    return 0
+
+
 def cmd_polish(args: argparse.Namespace) -> int:
     """Read raw text on stdin, print cleaned text (usable as a post-processor for other tools)."""
     cfg = C.load_config()
@@ -610,7 +629,7 @@ def cmd_config(args: argparse.Namespace) -> int:
         print(C.CONFIG_FILE)
     else:
         print(("created " if created else "") + str(C.CONFIG_FILE))
-        print(C.CONFIG_FILE.read_text())
+        print(C.CONFIG_FILE.read_text(encoding="utf-8"))
     return 0
 
 
@@ -648,6 +667,14 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--engine", choices=["parakeet", "whisper"], help="override [engine] name")
     t.add_argument("-v", "--verbose", action="store_true", help="print timing to stderr")
     t.set_defaults(func=cmd_transcribe)
+
+    bn = sub.add_parser("bench", help="time recognition, streaming and cleanup on WAV files (no daemon needed)")
+    bn.add_argument("files", nargs="+", metavar="FILE.wav", help="a FILE.txt next to it adds the word error rate")
+    bn.add_argument("--runs", type=int, default=3)
+    bn.add_argument("--cleanup", action="store_true", help="also time the cleanup round trip (uses your API key)")
+    bn.add_argument("--engine", choices=["parakeet", "whisper"])
+    bn.add_argument("--format", choices=["text", "json", "markdown"], default="text")
+    bn.set_defaults(func=cmd_bench)
 
     po = sub.add_parser("polish", help="clean up dictated text from stdin with Claude")
     po.add_argument("--app", help="name of the focused app, for tone/formatting")

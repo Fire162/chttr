@@ -68,7 +68,7 @@ def daemon(monkeypatch):
     monkeypatch.setattr(Dm, "Transcriber", FakeTranscriber)
     monkeypatch.setattr(Dm, "Feedback", QuietFeedback)
     typed: list[str] = []
-    monkeypatch.setattr(Dm, "deliver", lambda text, cfg, mode="", trailing_space=None: typed.append(text) or "type")
+    monkeypatch.setattr(Dm, "deliver", lambda text, cfg, **kw: typed.append(text) or "type")
     monkeypatch.setattr(Dm, "focused_window", lambda: ("kitty", "~"))
     monkeypatch.setattr(Dm, "grab_selection", lambda terminal: "")
     cfg = C.Config(modes=C._default_modes())

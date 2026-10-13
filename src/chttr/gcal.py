@@ -59,7 +59,7 @@ def read_urls(path: str) -> list[str]:
     p = Path(path).expanduser()
     if not p.is_file():
         return []
-    return [line.strip() for line in p.read_text().splitlines() if line.strip() and not line.startswith("#")]
+    return [line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
 
 
 def add_url(path: str, url: str) -> Path:

@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import CONFIG_DIR, PolishCfg
-from .polish import _api_key, _claude_configured
+from .polish import _claude_configured
+from .polish import client as polish_client
 
 log = logging.getLogger("chttr.notes")
 
@@ -129,9 +130,7 @@ def available(cfg: PolishCfg) -> bool:
 
 
 def _client(cfg: PolishCfg):
-    import anthropic
-
-    return anthropic.Anthropic(api_key=_api_key(cfg), timeout=600, max_retries=2)
+    return polish_client(cfg, timeout=600, max_retries=2)
 
 
 def _call(cfg: PolishCfg, effort: str, schema: dict, content: list[dict], max_tokens: int = 32000,

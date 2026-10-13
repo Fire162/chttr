@@ -5,7 +5,40 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-13
+## [0.4.0] - 2026-10-13
+
+Speed: text arrives about as fast as you let go of the key. This release also
+contains everything listed under 0.3.0 (tests, CI, pinned models, privacy
+hardening), which was not released on its own.
+
+### Added
+- Streaming recognition (`[engine] streaming = true`, the default): every pause
+  is transcribed in the background while you keep talking, so after release
+  only the last stretch is left to recognize. Live captions come from the same
+  passes instead of re-transcribing the last 8 seconds every 0.8 seconds.
+- `[polish] cleanup_model`, default `claude-haiku-5-5`: dictation cleanup and
+  command mode run on Haiku with thinking off, which answers in a few hundred
+  milliseconds. Meeting notes stay on `[polish] model` (Opus).
+- Quick path: short phrases with no fillers, self-corrections or spoken
+  punctuation ("git status", "sounds good") skip the model round trip
+  (`[polish] quick_max_words`, default 4).
+- `chttr bench FILE.wav…`: full-pass vs. after-release recognition time,
+  cleanup time, real-time factor and word error rate. CI runs it on every
+  change to `main` and publishes the numbers.
+- `[output] paste_over`: dictations longer than 400 characters are pasted
+  instead of typed character by character; your clipboard is restored.
+
+### Changed
+- One Anthropic client for the daemon's lifetime (no TLS handshake per
+  dictation), the cleanup system prompt is marked for prompt caching, and the
+  daemon opens the API connection at startup.
+- Every file chttr reads or writes (notes, config, dictionary, history) is UTF-8
+  whatever the system locale.
+- End-to-end tests with the real models (`uv run pytest -m model`): the whole
+  meeting pipeline on a synthesized two-voice call, and streaming vs. full-pass
+  accuracy. CI runs them with the benchmark.
+
+## [0.3.0] - 2026-10-13 (not released separately; shipped in 0.4.0)
 
 Foundations: a test suite, CI, pinned model downloads, privacy hardening and a
 more responsive daemon. No change to how you use chttr.
@@ -61,6 +94,7 @@ personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
 Omarchy plugin.
 
-[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/robjobbed/chttr/releases/tag/v0.3.0
+[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/robjobbed/chttr/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/robjobbed/chttr/compare/v0.2.1...v0.4.0
 [0.2.1]: https://github.com/robjobbed/chttr/commit/7953228

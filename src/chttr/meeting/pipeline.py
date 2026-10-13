@@ -35,8 +35,8 @@ def _load_channel(directory: Path, name: str) -> np.ndarray:
 
 
 def _transcribe(utts: list[Utterance], audio: dict[str, np.ndarray], cfg: Config, names: list[str]) -> None:
-    from .dictionary import Dictionary
-    from .transcriber import Transcriber, _clean
+    from ..dictionary import Dictionary
+    from ..transcriber import Transcriber, _clean
 
     engine = Transcriber(cfg).engine
     dictionary = Dictionary.load()
@@ -98,7 +98,7 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
 
     meta = update_meta(directory, status="processing", error="")
     started = float(meta["started"])
-    events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines() if line.strip()] \
+    events = [json.loads(line) for line in (directory / "events.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()] \
         if (directory / "events.jsonl").exists() else []
     threads = cfg.engine.threads
     D.ensure_models()
@@ -173,6 +173,7 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
     result["markdown"] = str(md)
     write_json(directory / "result.json", result)
 
+    audio.clear()                   # release the memory-mapped recordings before deleting them
     _finish_audio(directory, md, cfg)
     update_meta(directory, status="done", markdown=str(md))
     return md

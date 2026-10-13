@@ -117,6 +117,6 @@ def render(directory: Path, result: dict, cfg: Config) -> Path:
         while path.exists():
             path = out_dir / f"{base} ({n}).md"
             n += 1
-    path.write_text("\n".join(lines))
+    path.write_text("\n".join(lines), encoding="utf-8")
     return path
 

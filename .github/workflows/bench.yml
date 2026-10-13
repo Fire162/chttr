@@ -1,0 +1,52 @@
+name: Benchmark
+
+# Real models on real (synthesized) speech: recognition time for a full pass vs.
+# what's left after the key release with streaming, real-time factor and word
+# error rate. Results land in the run's summary page.
+
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", "tests/bench/**", "scripts/make-bench-audio.py", ".github/workflows/bench.yml"]
+  pull_request:
+    paths: ["src/chttr/transcriber.py", "src/chttr/streaming.py", "src/chttr/bench.py"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: sudo apt-get update -q && sudo apt-get install -yq espeak-ng
+      - run: uv sync --python 3.13 --group dev
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/chttr/models
+          key: models-${{ hashFiles('src/chttr/models.py') }}
+      - name: Download the pinned models (checksum-verified)
+        run: |
+          uv run python - <<'EOF'
+          from chttr import config as C, diarize, models as M
+          target = C.PARAKEET_SEARCH_DIRS[-1]
+          for spec in M.PARAKEET:
+              M.download(spec, target / spec.name)
+          diarize.ensure_models()
+          print("models ready in", C.MODELS_DIR)
+          EOF
+      - run: uv run python scripts/make-bench-audio.py
+      - name: Benchmark
+        run: |
+          uv run chttr bench tests/bench/*.wav --runs 5
+          {
+            echo "## chttr benchmark (GitHub runner, ${{ runner.os }}, $(nproc) vCPU)"
+            echo
+            uv run chttr bench tests/bench/*.wav --runs 5 --format markdown
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Accuracy gate
+        run: uv run pytest -m model -q

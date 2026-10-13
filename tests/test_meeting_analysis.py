@@ -90,3 +90,26 @@ def test_turns_join_consecutive_lines_of_one_speaker():
         Utterance(21.5, 22, "mic", "", speaker="Rob"),
     ]
     assert _turns(utts) == [("Rob", 0, "hello how are you"), ("Dana", 5, "good"), ("Rob", 20, "anyway")]
+
+
+def test_pipeline_transcribe_step_runs(monkeypatch):
+    """The per-utterance transcription step, with the recognizer faked (catches broken
+    imports inside the function, which only run during a real meeting)."""
+    import numpy as np
+
+    import chttr.transcriber
+    from chttr.meeting import pipeline
+
+    class Engine:
+        name = "parakeet"
+
+        def recognize(self, audio, prompt):
+            return f"words  {len(audio)}"
+
+    monkeypatch.setattr(chttr.transcriber, "Transcriber", lambda cfg: type("T", (), {"engine": Engine()})())
+    utts = [Utterance(0.0, 1.0, "mic"), Utterance(1.0, 1.5, "them")]
+    audio = {"mic": np.zeros(32000, dtype=np.int16), "them": np.zeros(32000, dtype=np.int16)}
+    from chttr.config import Config
+
+    pipeline._transcribe(utts, audio, Config(), ["Dana"])
+    assert [u.text for u in utts] == ["words 16000", "words 8000"]

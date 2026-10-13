@@ -66,6 +66,6 @@ def test_load_extension_flag_is_added_once_and_replaces_old_copies(tmp_path):
     ext = str(NH.EXTENSION_DIR)
     assert NH._add_load_extension(flags, ext).startswith("added")
     assert NH._add_load_extension(flags, ext) == "already loaded"
-    text = flags.read_text()
+    text = flags.read_text(encoding="utf-8")
     assert f"--load-extension=/opt/other,{ext}" in text
     assert (tmp_path / "chromium-flags.conf.bak-chttr").exists()

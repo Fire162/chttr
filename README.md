@@ -12,7 +12,7 @@ meeting notes, with names next to every line.
 Speech recognition runs on your machine. Claude (optional) tidies dictation
 and writes meeting summaries.
 
-> **Early release (0.3).** Built and used daily on an Omarchy 4 laptop. The
+> **Early release (0.4).** Built and used daily on an Omarchy 4 laptop. The
 > logic is covered by a test suite that runs in CI on every change; the Google
 > Meet extension has been used in few real calls so far. Issues and fixes
 > welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -20,11 +20,15 @@ and writes meeting summaries.
 - **Local speech-to-text** with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX, the
   model Omarchy's voxtype downloads), about 3× faster than whisper base.en on
   CPU and more accurate. whisper.cpp is still available (`[engine] name = "whisper"`).
-  Leading and trailing silence is trimmed before recognition.
-- **Wispr-style cleanup** with Claude, or a local Ollama model: filler words
-  removed, punctuation and casing fixed, self-corrections applied ("Tuesday, no,
-  Wednesday"), spoken formatting honoured. Falls back to the raw transcript if
-  no model is available.
+- **Streaming recognition**: every pause is transcribed while you keep talking,
+  so letting go of the key leaves only the last second or so to recognize. A
+  20-second dictation is recognized in about 0.2 s after release instead of
+  0.75 s (`chttr bench` measures it on your machine).
+- **Wispr-style cleanup** with Claude Haiku (a few hundred milliseconds), or a
+  local Ollama model: filler words removed, punctuation and casing fixed,
+  self-corrections applied ("Tuesday, no, Wednesday"), spoken formatting
+  honoured. Short, clean phrases skip the round trip entirely. Falls back to
+  the raw transcript if no model is available.
 - **Per-app modes**: terminals get one plain line with no trailing period, code
   editors keep identifiers, chat apps stay casual, email and docs get full
   sentences. A config table matched against the focused window's class.
@@ -276,6 +280,7 @@ recorded. Tell people.
 | `chttr learn` / `forget` / `snippet` / `dictionary` | Edit the dictionary |
 | `chttr status [--follow] [--json]` | `idle` / `recording` / `transcribing`; `--json` matches the Omarchy bar indicator format |
 | `chttr transcribe file.wav [--raw] [--engine E] [-v]` | One-off transcription without the daemon |
+| `chttr bench FILE.wav… [--cleanup] [--format FORMAT]` | Time recognition (full pass vs. after release), cleanup, real-time factor; word error rate when FILE.txt exists; FORMAT is text, json or markdown |
 | `chttr polish [--app NAME]` | Clean up text from stdin |
 | `chttr doctor [--verify]` | Check engine, cleanup backend, daemon and key permissions; `--verify` hashes the models |
 | `chttr reload` | Re-read config.toml (switching engines reloads the model) |
@@ -307,9 +312,12 @@ for (dictate, hands-free, command). `recorder.py` runs `pw-record` at 16 kHz
 mono and meters every 20 ms chunk; the daemon uses the levels for hands-free
 auto-stop and pipes them to `overlay.py`, a GTK4 layer-shell window run under
 the system Python (PyGObject and gtk4-layer-shell, preloaded via `LD_PRELOAD`).
-While recording, a caption thread re-transcribes the last 8 s every 0.8 s and
-sends the text to the overlay; the model sits behind a lock so the final pass
-waits for it. `transcriber.py` wraps Parakeet (onnx-asr) and whisper.cpp,
+While recording, `streaming.py` watches the levels for pauses and transcribes
+each finished stretch in the background (cutting in the middle of the pause),
+which also feeds the overlay's live captions; after release only the audio
+since the last pause is recognized. A new dictation can start while the
+previous one is still being cleaned up, and results are typed in order.
+`transcriber.py` wraps Parakeet (onnx-asr) and whisper.cpp,
 trims silence and filters whisper's silence hallucinations. `polish.py` holds
 the cleanup and command prompts and talks to Claude or Ollama. `output.py`
 reads the selection (Ctrl+C into an emptied clipboard, restored afterwards;
