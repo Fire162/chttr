@@ -227,8 +227,10 @@ def run_hook(command: str, meeting: dict) -> None:
     if not command:
         return
     md = meeting.get("markdown", "")
+    # "~/bin/notify.sh" gets the path appended; a command that uses $1 itself is left alone
+    script = command if re.search(r"\$(\{)?[1@*]", command) else command + ' "$1"'
     try:
-        subprocess.run(["sh", "-c", command + ' "$1"', "chttr-hook", md], input=json.dumps(meeting).encode(),
+        subprocess.run(["sh", "-c", script, "chttr-hook", md], input=json.dumps(meeting).encode(),
                        timeout=120, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         log.warning("on_meeting_done hook failed: %s", exc)
