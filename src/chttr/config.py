@@ -185,7 +185,15 @@ dir = "~/Documents/Meetings"
 #   "ask"    - notification with a Record button
 #   "always" - start recording straight away
 #   "never"  - only record with chttr meeting start
+# The same applies to calls in other apps when detect_calls is on.
 auto = "ask"
+# Notice calls in Zoom, Teams, Slack, Discord, Webex, ... (and in the browser, when
+# it isn't Google Meet) by which app holds the microphone, and offer to record.
+# No bot joins the call. The recording stops when the app lets go of the mic.
+detect_calls = true
+# Split your microphone's side into voices too, for people in the room with you
+# (they show up as "In the room 1", ...; rename them like any speaker).
+room_speakers = true
 # Keep the audio (stereo Opus: you left, them right) next to the notes
 keep_audio = false
 # Notes (summary, sections, action items) with the [polish] Claude model (needs a key)
@@ -334,6 +342,8 @@ class HotkeysCfg:
 class MeetingCfg:
     dir: str = "~/Documents/Meetings"
     auto: str = "ask"
+    detect_calls: bool = True
+    room_speakers: bool = True
     keep_audio: bool = False
     summary: bool = True
     summary_effort: str = "medium"

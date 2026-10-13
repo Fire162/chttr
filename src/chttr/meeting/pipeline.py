@@ -18,7 +18,7 @@ import numpy as np
 from .. import diarize as D
 from ..config import Config
 from .analysis import SELF_CAPTION_NAMES, _intervals, _is_echo, _overlap
-from .naming import assign_speakers
+from .naming import ROOM_OFFSET, assign_speakers, room_clusters
 from .render import render
 from .store import SAMPLE_RATE, Utterance, update_meta, write_json
 from .styles import choose_style, write_notes
@@ -132,12 +132,20 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
 
     with D.timed("speaker embeddings"):
         centroids = _diarize(them, audio["them"], threads)
+        mic_centroids = _diarize(mine, audio["mic"], threads) if cfg.meeting.room_speakers and len(mine) >= 6 else {}
 
     # ---- who is who --------------------------------------------------------
     attendees = [a.to_dict() for a in event.attendees] if event else []
     voices = D.load_voices()
+    me_att = next((a for a in attendees if a["is_me"]), None)
+    me_key = ((me_att or {}).get("email") or cfg.meeting.me or "me").lower()
+    own = voices.get(me_key)
+    me_cluster, room = room_clusters(mine, mic_centroids, own.embedding if own else None)
+    if room:
+        log.info("%d other voice(s) in the room on your microphone", len(room))
     speakers, me_name, cluster_seconds = assign_speakers(mine, them, events, started, attendees, cfg.meeting.me,
-                                                         centroids, voices)
+                                                         centroids, voices, room)
+    centroids.update({ROOM_OFFSET + c: v for c, v in mic_centroids.items()})
     all_utts = sorted(mine + them, key=lambda u: u.start)
 
     duration = max((len(a) for a in audio.values()), default=0) / SAMPLE_RATE
@@ -166,6 +174,10 @@ def process(directory: Path, cfg: Config, summary: bool | None = None) -> Path:
         secs = sum(cluster_seconds[c] for c in sp.clusters)
         if sp.source in ("captions", "calendar", "voice") and vecs and secs >= 10:
             D.remember(voices, sp.name, sp.email, D.centroid(np.stack(vecs)), secs)
+    if me_cluster is not None and me_cluster in mic_centroids:
+        mine_secs = sum(u.end - u.start for u in mine if u.cluster == me_cluster)
+        if mine_secs >= 30:
+            D.remember(voices, me_name, me_key if "@" in me_key else "", mic_centroids[me_cluster], mine_secs)
     D.save_voices(voices)
     np.savez(directory / "speakers.npz", **{str(c): v for c, v in centroids.items()})  # pyright: ignore[reportArgumentType]
 

@@ -87,3 +87,36 @@ def test_declined_invitees_are_not_used_for_the_calendar_guess():
     attendees = [attendee("Ali", "a@x.com", status="DECLINED")]
     speakers, _, _ = assign_speakers([], them, [], T0, attendees, "", {0: unit(7)}, {})
     assert list(speakers) == ["Speaker 1"]
+
+
+def test_room_voices_get_their_own_labels():
+    from chttr.meeting.naming import ROOM_OFFSET, room_clusters
+
+    mine = [Utterance(i * 10, i * 10 + 8, "mic", "x", cluster=0) for i in range(8)]          # you: 64 s
+    mine += [Utterance(100 + i * 10, 100 + i * 10 + 7, "mic", "y", cluster=1) for i in range(4)]  # colleague: 28 s
+    mine += [Utterance(200, 202, "mic", "z", cluster=2)]                                     # a cough: 2 s
+    centroids = {0: unit(10), 1: unit(11), 2: unit(12)}
+    me, room = room_clusters(mine, centroids, None)
+    assert me == 0 and room == {1: "In the room 1"}
+    speakers, _, _ = assign_speakers(mine, [], [], T0, [], "Rob", {}, {}, room)
+    assert speakers["In the room 1"].clusters == [ROOM_OFFSET + 1]
+    assert {u.speaker for u in mine if u.cluster in (0, 2)} == {"Rob"}
+    assert {u.speaker for u in mine if u.cluster == 1} == {"In the room 1"}
+
+
+def test_a_remembered_own_voice_picks_you_even_when_you_talk_less():
+    from chttr.meeting.naming import room_clusters
+
+    me_voice = unit(20)
+    mine = [Utterance(i * 10, i * 10 + 5, "mic", "a", cluster=0) for i in range(5)]           # 25 s, you
+    mine += [Utterance(100 + i * 10, 100 + i * 10 + 8, "mic", "b", cluster=1) for i in range(8)]  # 64 s, a talker
+    me, room = room_clusters(mine, {0: me_voice, 1: unit(21)}, me_voice)
+    assert me == 0 and room == {1: "In the room 1"}
+
+
+def test_one_voice_on_the_mic_is_just_you():
+    from chttr.meeting.naming import room_clusters
+
+    mine = [Utterance(0, 30, "mic", "a", cluster=0)]
+    assert room_clusters(mine, {0: unit(1)}, None) == (0, {})
+    assert room_clusters(mine, {}, None) == (None, {})

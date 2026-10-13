@@ -2,9 +2,12 @@
 //   joined / left      when you enter or leave a call (with the Meet code)
 //   events             {type: "speaking", name, text, t}: the captions name who is talking
 //                      {type: "mute", muted, t}: your Meet mic button
-//   heartbeat          every 10 s during a call
-// Captions are switched on if they're off (and then hidden, unless you had them
-// on yourself). Nothing is stored or sent anywhere except the local chttr daemon.
+//   heartbeat          every 3 s during a call
+// Only while chttr is recording this call: captions are switched on if they're
+// off (and hidden again, unless you had them on yourself), and a small "chttr is
+// recording" badge stays on the page. When the recording stops, captions we
+// turned on are turned off. Nothing is stored or sent anywhere except the local
+// chttr daemon.
 //
 // Meet's DOM is undocumented and changes. Everything here prefers attributes that
 // have stayed stable (jsname, aria roles, the Material icon names inside buttons)
@@ -14,7 +17,7 @@
 (() => {
   const POLL_MS = 300;
   const FLUSH_MS = 1000;
-  const HEARTBEAT_MS = 10000;
+  const HEARTBEAT_MS = 3000;     // also how quickly the page learns that chttr started recording
   const HIDE_CAPTIONS_WE_ENABLED = true;
   const CODE_RE = /^\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:$|[/?#])/;
 
@@ -28,6 +31,39 @@
   let captionsTries = 0;
   let weEnabledCaptions = false;
   let nextCaptionsTry = 0;
+  let recording = false;        // what the daemon last said about this call
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg || msg.type !== "chttr-state") return;
+    const was = recording;
+    recording = !!msg.recording;
+    if (recording && !was) {
+      captionsTries = 0;
+      nextCaptionsTry = Date.now() + 1000;
+    }
+    if (!recording && was) stopUsingCaptions();
+    showBadge(recording);
+  });
+
+  // ---- recording badge ---------------------------------------------------
+  function showBadge(on) {
+    let badge = document.getElementById("chttr-recording-badge");
+    if (!on) {
+      if (badge) badge.remove();
+      return;
+    }
+    if (badge) return;
+    badge = document.createElement("div");
+    badge.id = "chttr-recording-badge";
+    badge.textContent = "● chttr is recording";
+    badge.title = "chttr is saving a transcript of this call on your computer";
+    Object.assign(badge.style, {
+      position: "fixed", top: "8px", left: "50%", transform: "translateX(-50%)", zIndex: "2147483647",
+      padding: "3px 10px", borderRadius: "999px", font: "500 12px/1.4 system-ui, sans-serif",
+      color: "#fff", background: "rgba(198, 40, 40, 0.85)", pointerEvents: "none",
+    });
+    document.documentElement.appendChild(badge);
+  }
 
   function send(msg) {
     try {
@@ -141,8 +177,25 @@
     return /turn off|hide|disable/i.test(label(btn));
   }
 
+  function stopUsingCaptions() {
+    const container = captionContainer();
+    if (container) {
+      const region = container.closest('[role="region"]') || container;
+      if (region.dataset.chttrHidden) {
+        delete region.dataset.chttrHidden;
+        region.style.removeProperty("opacity");
+        region.style.removeProperty("pointer-events");
+      }
+    }
+    if (weEnabledCaptions) {
+      const btn = captionsButton();
+      if (btn && captionsOn(btn)) btn.click();
+      weEnabledCaptions = false;
+    }
+  }
+
   function ensureCaptions() {
-    if (captionContainer() || captionsTries >= 6 || Date.now() < nextCaptionsTry) return;
+    if (!recording || captionContainer() || captionsTries >= 6 || Date.now() < nextCaptionsTry) return;
     captionsTries += 1;
     nextCaptionsTry = Date.now() + 5000;
     const btn = captionsButton();
@@ -180,12 +233,14 @@
       send({ type: "left", code, t: now });
       inCall = false;
       code = null;
+      recording = false;
+      showBadge(false);
       return;
     }
     if (!inCall) return;
 
     ensureCaptions();
-    const container = captionContainer();
+    const container = recording ? captionContainer() : null;
     if (container) {
       hideCaptions(container);
       const current = readCaptions(container);

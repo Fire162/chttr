@@ -322,11 +322,11 @@ class Daemon:
             return {"ok": True, "state": self.state, "message": "discarded"}
         return {"ok": False, "state": self.state, "error": f"unknown meeting command {arg!r}"}
 
-    def _meeting_start(self, source: str) -> dict:
+    def _meeting_start(self, source: str, title: str = "") -> dict:
         if self.meeting:
             return {**self._meeting_status(), "message": "already recording a meeting"}
         code = self.call["code"] if self.call else ""
-        title = self.call.get("title", "") if self.call else ""
+        title = (self.call.get("title", "") if self.call else "") or title
         session = Session(self.cfg, code, title, source if not self.call else "extension")
         try:
             session.start()
@@ -395,6 +395,69 @@ class Daemon:
             # daemon restarted mid-call: the page keeps talking, so pick the call back up
             self.call = {"code": code, "title": msg.get("title", ""), "seen": now}
         return {"ok": True, "recording": bool(self.meeting and self.meeting.code == code)}
+
+    # ---- calls in other apps (PipeWire) ------------------------------------
+    def _watch_calls(self) -> None:
+        from . import calls as K
+
+        watcher = K.CallWatcher()
+        while not self._stop.wait(3.0):
+            if not self.cfg.meeting.detect_calls:
+                continue
+            try:
+                app = K.current_call(K.snapshot(), meet_call_active=self.call is not None)
+            except Exception:
+                log.debug("call detection failed", exc_info=True)
+                continue
+            decision = watcher.update(app, time.monotonic())
+            if decision is None:
+                continue
+            what, label = decision
+            if what == "start" and not self.meeting and self.call is None:
+                log.info("a call seems to have started in %s", label)
+                if self.cfg.meeting.auto == "always":
+                    with self.lock:
+                        self._meeting_start("app", self._calendar_title() or f"{label} call")
+                elif self.cfg.meeting.auto == "ask":
+                    threading.Thread(target=self._ask_to_record_app, args=(label,), daemon=True).start()
+            elif what == "end":
+                with self.lock:
+                    if self.meeting and self.meeting.source == "app":
+                        log.info("%s let go of the microphone; the call is over", label)
+                        self._meeting_stop()
+
+    def _calendar_title(self) -> str:
+        from . import gcal
+
+        try:
+            event = gcal.find_event(gcal.read_urls(self.cfg.meeting.calendar_file), "")
+            return event.title if event else ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _ask_to_record_app(self, app: str) -> None:
+        from . import gcal
+
+        title, body = self._calendar_title(), "chttr will save a transcript and notes."
+        try:
+            event = gcal.find_event(gcal.read_urls(self.cfg.meeting.calendar_file), "")
+            people = [a.name or a.email for a in event.attendees if not a.is_me] if event else []
+            if people:
+                body = ", ".join(people[:5]) + (f" +{len(people) - 5}" if len(people) > 5 else "")
+        except Exception:  # noqa: BLE001
+            pass
+        label = title or f"this {app} call"
+        try:
+            out = subprocess.run(["notify-send", "-a", "chttr", "-u", "normal", "-t", "120000",
+                                  "-A", "record=Record", "-A", "skip=Not now", "--wait",
+                                  f"Record \u201c{label}\u201d?", body],
+                                 capture_output=True, text=True, timeout=180).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        if out == "record":
+            with self.lock:
+                if not self.meeting:
+                    self._meeting_start("app", title or f"{app} call")
 
     def _ask_to_record(self, code: str, title: str) -> None:
         from . import gcal
@@ -856,6 +919,7 @@ class Daemon:
         signal.signal(signal.SIGTERM, on_signal)
         signal.signal(signal.SIGINT, on_signal)
         threading.Thread(target=self._watchdog, daemon=True).start()
+        threading.Thread(target=self._watch_calls, name="calls", daemon=True).start()
         threading.Thread(target=P.warm, args=(self.cfg.polish,), daemon=True).start()
         self._start_hotkeys()
         log.info("listening on %s (cleanup backend: %s)", sock_path, P.backend(self.cfg.polish))
