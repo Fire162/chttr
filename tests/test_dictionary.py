@@ -87,3 +87,42 @@ def test_save_escapes_quotes(tmp_path):
 def test_missing_file_is_an_empty_dictionary(tmp_path):
     d = Dictionary.load(tmp_path / "nope.toml")
     assert d.vocabulary == [] and d.whisper_prompt() is None
+
+
+def test_a_phrase_matches_across_commas_and_hyphens():
+    d = Dictionary(replacements={"sora beth ani": "Sohrab Behbahani"}, sound_alikes=False)
+    assert d.apply("my name is Sora Beth Ani.") == "my name is Sohrab Behbahani."
+    assert d.apply("Sora, Beth Ani here") == "Sohrab Behbahani here"
+    assert d.apply("sora-beth ani") == "Sohrab Behbahani"
+    assert d.apply("sora bethany") == "sora bethany"
+
+
+def test_lingo_words_group_mishearings_under_each_spelling():
+    d = Dictionary(vocabulary=["Sohrab"], replacements={"so rob": "Sohrab", "sorob": "Sohrab", "omarchi": "Omarchy"})
+    assert d.words() == [
+        {"word": "Sohrab", "heard": ["so rob", "sorob"], "vocabulary": True},
+        {"word": "Omarchy", "heard": ["omarchi"], "vocabulary": False},
+    ]
+
+
+def test_rename_keeps_every_mishearing(tmp_path):
+    d = Dictionary(vocabulary=["Sorab"], replacements={"so rob": "Sorab", "sorob": "Sorab"})
+    assert d.rename("Sorab", "Sohrab")
+    assert d.vocabulary == ["Sohrab"] and set(d.replacements.values()) == {"Sohrab"}
+    assert d.apply("ask so rob") == "ask Sohrab"
+    assert not d.rename("Nobody", "Somebody")
+    assert not d.rename("Sohrab", "  ")
+
+
+def test_rename_onto_an_existing_word_merges_them():
+    d = Dictionary(vocabulary=["Sohrab", "Sorab"], replacements={"sorob": "Sorab"})
+    assert d.rename("Sorab", "Sohrab")
+    assert d.vocabulary == ["Sohrab"] and d.replacements == {"sorob": "Sohrab"}
+
+
+def test_unhear_drops_one_mishearing_and_keeps_the_word():
+    d = Dictionary(vocabulary=["X-ray"], replacements={"x-ray": "X-ray", "ex ray": "X-ray"}, sound_alikes=False)
+    assert d.unhear("X Ray")
+    assert d.replacements == {"ex ray": "X-ray"} and d.vocabulary == ["X-ray"]
+    assert d.apply("an x-ray and an ex ray") == "an x-ray and an X-ray"
+    assert not d.unhear("never heard")

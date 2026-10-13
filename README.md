@@ -193,6 +193,19 @@ All of them ship with Omarchy.
 
 ## Personal dictionary and snippets
 
+### Lingo
+
+**Lingo** is where you teach chttr how you spell things. Open it from the chttr
+menu in the bar (**Lingo: fix how words are spelled**) or with `chttr lingo`.
+It opens in your browser and shows your recent dictations: click the word, or
+the words, that came out wrong ("Sora Beth Ani"), type how it should be spelled
+("Sohrab Behbahani") and press **Always spell it this way**. From the next
+dictation on, chttr types it your way, in every app. Below that you can rename
+a spelling, drop one of the ways it was misheard, add a word by hand, and try a
+sentence to see what chttr would type. Lingo edits the same
+`dictionary.toml` as the commands below, and its server stops on its own 15
+minutes after you close the page.
+
 ```bash
 chttr learn Sohrab --heard sorob --heard "so rob"   # correct spelling + what the recognizer hears
 chttr fix                                            # show the last dictation, ask what was wrong
@@ -428,6 +441,7 @@ recorded. Tell people.
 | `chttr history [--print [N]]` | Pick a past dictation and type it again |
 | `chttr stats [--days N]` | Words, speaking speed, time saved, per-day chart |
 | `chttr fix [WRONG RIGHT]` | Learn a correction from the last dictation |
+| `chttr lingo` | Lingo in your browser: fix how words are spelled, from past dictations |
 | `chttr learn` / `forget` / `snippet` / `dictionary` | Edit the dictionary |
 | `chttr status [--follow] [--json]` | `idle` / `recording` / `transcribing`; `--json` matches the Omarchy bar indicator format |
 | `chttr transcribe file.wav [--raw] [--engine E] [-v]` | One-off transcription without the daemon |

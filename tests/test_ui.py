@@ -85,3 +85,72 @@ def test_posts_need_the_header_not_just_the_query_token(server, monkeypatch):
     assert status == 200 and renamed == {"old": "Ali", "new": "Ali Khan"}
     status, _ = post(server + "/api/meeting/2026-10-01-140000/rename", {"old": "", "new": "x"}, TOKEN)
     assert status == 400
+
+
+@pytest.fixture
+def lingo_files(monkeypatch, tmp_path):
+    from chttr import dictionary, history
+
+    log = tmp_path / "history.jsonl"
+    log.write_text("\n".join(json.dumps(e) for e in [
+        {"ts": "2026-10-13T13:52:37+00:00", "kind": "dictate", "app": "foot",
+         "raw": "So my name is Sora Beth Ani.", "text": "So my name is Sora Beth Ani."},
+        {"ts": "2026-10-13T13:53:00+00:00", "kind": "command", "raw": "make it shorter", "text": "Short."},
+    ]) + "\n")
+    monkeypatch.setattr(history.C, "HISTORY_FILE", log)
+    dictionary.DICTIONARY_FILE.unlink(missing_ok=True)
+    yield
+    dictionary.DICTIONARY_FILE.unlink(missing_ok=True)
+
+
+def test_lingo_needs_the_token_and_the_header(server, lingo_files):
+    assert get(server + "/api/lingo")[0] == 403
+    assert post(server + "/api/lingo/learn?token=secret", {"word": "Sohrab"})[0] == 403
+
+
+def test_lingo_learns_from_a_dictation_and_applies_it(server, lingo_files):
+    state = json.loads(get(server + "/api/lingo", TOKEN)[1])
+    assert state["words"] == []
+    assert [r["heard"] for r in state["recent"]] == ["So my name is Sora Beth Ani."]   # commands are left out
+
+    status, state = post(server + "/api/lingo/learn", {"word": "Sohrab Behbahani", "heard": ["Sora Beth Ani"]}, TOKEN)
+    assert status == 200
+    assert state["words"] == [{"word": "Sohrab Behbahani", "heard": ["sora beth ani"], "vocabulary": True}]
+    status, out = post(server + "/api/lingo/try", {"text": "So my name is Sora, Beth Ani."}, TOKEN)
+    assert status == 200 and out["typed"] == "So my name is Sohrab Behbahani."
+
+    from chttr.dictionary import Dictionary
+
+    assert Dictionary.load().replacements == {"sora beth ani": "Sohrab Behbahani"}   # saved for the daemon
+
+
+def test_lingo_rename_unhear_and_forget(server, lingo_files):
+    post(server + "/api/lingo/learn", {"word": "Sorab", "heard": ["so rob", "sorob"]}, TOKEN)
+    status, state = post(server + "/api/lingo/rename", {"old": "Sorab", "new": "Sohrab"}, TOKEN)
+    assert status == 200 and state["words"][0] == {"word": "Sohrab", "heard": ["so rob", "sorob"], "vocabulary": True}
+    status, state = post(server + "/api/lingo/unhear", {"heard": "sorob"}, TOKEN)
+    assert status == 200 and state["words"][0]["heard"] == ["so rob"]
+    status, state = post(server + "/api/lingo/forget", {"word": "Sohrab"}, TOKEN)
+    assert status == 200 and state["words"] == []
+
+
+def test_lingo_rejects_bad_input(server, lingo_files):
+    assert post(server + "/api/lingo/learn", {"word": "  ", "heard": ["x"]}, TOKEN)[0] == 400
+    assert post(server + "/api/lingo/learn", {"word": "x" * 500}, TOKEN)[0] == 400
+    assert post(server + "/api/lingo/rename", {"old": "Nobody", "new": "Somebody"}, TOKEN)[0] == 400
+    assert post(server + "/api/lingo/forget", {"word": "Nobody"}, TOKEN)[0] == 400
+    assert post(server + "/api/lingo/drop-tables", {}, TOKEN)[0] == 404
+
+
+def test_idle_server_stops_itself(monkeypatch):
+    stopped = threading.Event()
+
+    class Fake:
+        def shutdown(self):
+            stopped.set()
+
+    U.Handler.last_request = 0.0
+    monkeypatch.setattr(U.time, "monotonic", lambda: 1000.0)
+    t = threading.Thread(target=U._stop_when_idle, args=(Fake(), 60), daemon=True)
+    t.start()
+    assert stopped.wait(2)

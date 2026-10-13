@@ -6,6 +6,10 @@ local users and web pages can't read it): search across meetings, read the
 notes and the transcript with clickable timestamps (synced to the audio when
 `[meeting] keep_audio` kept it), rename speakers, switch note styles, and see
 every action item in one place.
+
+Lingo (`chttr lingo`, the Lingo tab) edits the personal dictionary: pick words
+from a past dictation and say how they should be spelled, rename a spelling,
+drop a mis-hearing, and try a sentence to see what chttr would type.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ import re
 import secrets
 import subprocess
 import threading
+import time
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,10 +30,54 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import config as C
 from . import library as L
+from .dictionary import Dictionary
 
 log = logging.getLogger("chttr.ui")
 STATIC = Path(__file__).with_name("ui_static")
 _ID = re.compile(r"^[\w.-]+$")
+LINGO_RECENT = 40               # dictations shown in Lingo
+LINGO_MAX = 120                 # longest spelling or heard phrase Lingo accepts
+
+
+def _lingo_text(value: object) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > LINGO_MAX:
+        raise ValueError(f"keep it under {LINGO_MAX} characters")
+    return text
+
+
+def lingo_state() -> dict:
+    from .history import load
+
+    recent = [{"ts": e.get("ts", ""), "app": e.get("app", ""), "heard": str(e.get("raw") or e.get("text") or ""),
+               "typed": str(e.get("text") or "")}
+              for e in reversed(load()[-LINGO_RECENT:]) if e.get("kind", "dictate") == "dictate"]
+    return {"words": Dictionary.load().words(), "recent": recent}
+
+
+def lingo_action(action: str, body: dict) -> dict:
+    """One Lingo edit; saves the dictionary (the daemon re-reads it on every dictation)."""
+    d = Dictionary.load()
+    if action == "learn":
+        word = _lingo_text(body.get("word"))
+        heard = [h for h in (_lingo_text(x) for x in body.get("heard") or []) if h]
+        if not word:
+            raise ValueError("type how it should be spelled")
+        d.learn(word, heard)
+    elif action == "rename":
+        old, new = str(body.get("old", "")), _lingo_text(body.get("new"))
+        if not d.rename(old, new):
+            raise ValueError(f"{old!r} is not in Lingo")
+    elif action == "unhear":
+        if not d.unhear(str(body.get("heard", ""))):
+            raise ValueError("that isn't in Lingo")
+    elif action == "forget":
+        if not d.forget(str(body.get("word", ""))):
+            raise ValueError("that isn't in Lingo")
+    else:
+        raise LookupError(action)
+    d.save()
+    return lingo_state()
 
 
 def _audio_for(meeting_id: str) -> Path | None:
@@ -43,6 +92,7 @@ class Handler(BaseHTTPRequestHandler):
     token = ""
     host = ""
     cfg: C.Config | None = None
+    last_request = 0.0          # monotonic time of the last authorized request, for the idle timeout
 
     # ---- plumbing ----------------------------------------------------------------
     def log_message(self, fmt, *args) -> None:
@@ -53,7 +103,10 @@ class Handler(BaseHTTPRequestHandler):
             return False                     # DNS rebinding: a page on another name pointing at 127.0.0.1
         query = parse_qs(urlparse(self.path).query)
         given = self.headers.get("X-Chttr-Token") or (query.get("token") or [""])[0]
-        return secrets.compare_digest(given, self.token)
+        ok = secrets.compare_digest(given, self.token)
+        if ok:
+            Handler.last_request = time.monotonic()
+        return ok
 
     def _send(self, status: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
         self.send_response(status)
@@ -94,6 +147,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(HTTPStatus.FORBIDDEN, "forbidden")
         q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
         try:
+            if path == "/api/ping":
+                return self._json({"ok": True})
+            if path == "/api/lingo":
+                return self._json(lingo_state())
             if path == "/api/meetings":
                 return self._json(L.meetings(limit=500))
             if path == "/api/search":
@@ -128,6 +185,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized() or self.headers.get("X-Chttr-Token") is None:
             return self._error(HTTPStatus.FORBIDDEN, "forbidden")      # POSTs need the header: no form CSRF
         path = urlparse(self.path).path
+        if path.startswith("/api/lingo/"):
+            return self._lingo(path.removeprefix("/api/lingo/"), self._body())
         m = re.match(r"^/api/meeting/([^/]+)/(rename|style)$", path)
         if not m or not _ID.match(unquote(m.group(1))):
             return self._error(HTTPStatus.NOT_FOUND, "not found")
@@ -152,6 +211,19 @@ class Handler(BaseHTTPRequestHandler):
             log.exception("ui action failed")
             return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"{type(exc).__name__}: {exc}")
 
+    def _lingo(self, action: str, body: dict) -> None:
+        try:
+            if action == "try":
+                return self._json({"typed": Dictionary.load().apply(_lingo_text(body.get("text")))})
+            return self._json(lingo_action(action, body))
+        except LookupError:
+            return self._error(HTTPStatus.NOT_FOUND, "not found")
+        except ValueError as exc:
+            return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+        except Exception as exc:
+            log.exception("lingo action failed")
+            return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"{type(exc).__name__}: {exc}")
+
     def _static(self, path: str) -> None:
         name = "index.html" if path in ("/", "/index.html") else path.removeprefix("/static/")
         f = (STATIC / name).resolve()
@@ -174,22 +246,35 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, data, "audio/ogg", {"Accept-Ranges": "bytes"})
 
 
-def serve(port: int = 0, open_browser: bool = True, cfg: C.Config | None = None) -> None:
+def serve(port: int = 0, open_browser: bool = True, cfg: C.Config | None = None, view: str = "",
+          idle_timeout: float = 0) -> None:
+    """Serve until Ctrl+C, or until no page has asked for anything for `idle_timeout` seconds
+    (an open page pings every minute), so a copy started from a menu doesn't linger."""
     token = secrets.token_urlsafe(24)
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     host = f"127.0.0.1:{server.server_address[1]}"
     Handler.token, Handler.host, Handler.cfg = token, host, cfg
-    url = f"http://{host}/#{token}"
+    Handler.last_request = time.monotonic()
+    url = f"http://{host}/#{token}" + (f"/{view}" if view else "")
     L.sync()
-    print(f"chttr library: {url}\n(Ctrl+C to stop)", flush=True)
+    print(f"chttr {view or 'library'}: {url}\n(Ctrl+C to stop)", flush=True)
     if open_browser:
         threading.Thread(target=_open, args=(url,), daemon=True).start()
+    if idle_timeout > 0:
+        threading.Thread(target=_stop_when_idle, args=(server, idle_timeout), daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
+
+
+def _stop_when_idle(server: ThreadingHTTPServer, idle_timeout: float) -> None:
+    while time.monotonic() - Handler.last_request < idle_timeout:
+        time.sleep(min(30.0, idle_timeout / 4))
+    log.info("ui: no requests for %.0f s, stopping", idle_timeout)
+    server.shutdown()
 
 
 def _open(url: str) -> None:

@@ -22,6 +22,10 @@ replacements. A word is changed to a vocabulary word when it reduces to the
 same consonant skeleton (sound_key), the recognizer capitalized it (it took it
 for a name), it isn't an English word, and it's spelled reasonably close.
 Turn it off with `sound_alikes = false` at the top of dictionary.toml.
+
+Lingo (`chttr lingo`) edits this file from the browser; words(), rename() and
+unhear() are its view of it. A heard phrase still matches when the recognizer
+puts a comma or hyphen between its words ("Sora, Beth Ani").
 """
 
 from __future__ import annotations
@@ -77,6 +81,7 @@ class Dictionary:
     snippets: dict[str, str] = field(default_factory=dict)       # phrase (lowercase) -> expansion
     sound_alikes: bool = True
     _pattern: re.Pattern | None = field(default=None, repr=False)
+    _lookup: dict[str, str] = field(default_factory=dict, repr=False)
     _snippet_pattern: re.Pattern | None = field(default=None, repr=False)
 
     # ---- use ---------------------------------------------------------------
@@ -88,9 +93,12 @@ class Dictionary:
         meeting's attendees)."""
         if self.replacements:
             if self._pattern is None:
-                keys = sorted(self.replacements, key=len, reverse=True)
-                self._pattern = re.compile(r"\b(" + "|".join(re.escape(k) for k in keys) + r")\b", re.IGNORECASE)
-            text = self._pattern.sub(lambda m: self.replacements[m.group(1).lower()], text)
+                self._lookup = {key: v for k, v in self.replacements.items() if (key := _phrase_key(k)).strip()}
+                keys = sorted(self._lookup, key=len, reverse=True)
+                # words of a phrase may come out with a comma or hyphen between them ("Sora, Beth Ani")
+                alt = "|".join(re.escape(k).replace(r"\ ", _BETWEEN) for k in keys)
+                self._pattern = re.compile(r"\b(" + alt + r")\b", re.IGNORECASE)
+            text = self._pattern.sub(lambda m: self._lookup.get(_phrase_key(m.group(1)), m.group(1)), text)
         if self.sound_alikes:
             text = self.fix_sound_alikes(text, extra_names or [])
         return text
@@ -169,6 +177,39 @@ class Dictionary:
         self._pattern = None
         return found
 
+    # ---- Lingo: the spellings, one entry per word ------------------------------------
+    def words(self) -> list[dict]:
+        """Every spelling you taught chttr with the ways it was misheard, vocabulary order first."""
+        order = list(self.vocabulary) + sorted({v for v in self.replacements.values() if v not in self.vocabulary},
+                                               key=str.lower)
+        return [{"word": w, "heard": sorted(k for k, v in self.replacements.items() if v == w),
+                 "vocabulary": w in self.vocabulary} for w in order]
+
+    def rename(self, old: str, new: str) -> bool:
+        """Change how a word is spelled, keeping every way it was misheard."""
+        new = new.strip()
+        if not new or (old not in self.vocabulary and old not in self.replacements.values()):
+            return False
+        if old in self.vocabulary:
+            i = self.vocabulary.index(old)
+            if new in self.vocabulary:
+                del self.vocabulary[i]
+            else:
+                self.vocabulary[i] = new
+        for heard, typed in list(self.replacements.items()):
+            if typed == old:
+                self.replacements[heard] = new
+        self._pattern = None
+        return True
+
+    def unhear(self, heard: str) -> bool:
+        """Drop one way a word was misheard; the word itself stays."""
+        keys = [k for k in self.replacements if _phrase_key(k) == _phrase_key(heard)]
+        for k in keys:
+            del self.replacements[k]
+        self._pattern = None
+        return bool(keys)
+
     # ---- io ----------------------------------------------------------------
     @classmethod
     def load(cls, path: Path = DICTIONARY_FILE) -> Dictionary:
@@ -199,6 +240,14 @@ class Dictionary:
         for phrase, expansion in sorted(self.snippets.items()):
             lines.append(f"{_q(phrase)} = {_q(expansion)}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+_BETWEEN = r"[\s,-]+"
+
+
+def _phrase_key(text: str) -> str:
+    """How a heard phrase is matched: lowercase, words separated by single spaces."""
+    return " ".join(re.split(_BETWEEN, text.lower().strip()))
 
 
 _TOML_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "\r": "\\r"}

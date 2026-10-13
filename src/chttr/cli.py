@@ -243,6 +243,15 @@ def cmd_ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lingo(args: argparse.Namespace) -> int:
+    """Lingo: fix how chttr spells your words, in the browser."""
+    from .ui import serve
+
+    serve(port=args.port, open_browser=not args.no_browser, cfg=C.load_config(), view="lingo",
+          idle_timeout=args.idle_timeout)
+    return 0
+
+
 def cmd_polish(args: argparse.Namespace) -> int:
     """Read raw text on stdin, print cleaned text (usable as a post-processor for other tools)."""
     cfg = C.load_config()
@@ -820,6 +829,8 @@ def cmd_menu(args: argparse.Namespace) -> int:
         ("󰉋  Meeting notes folder", lambda: (meetings_dir.mkdir(parents=True, exist_ok=True),
                                             subprocess.Popen(["xdg-open", str(meetings_dir)], start_new_session=True))),
         ("󰋚  Dictation history", lambda: subprocess.Popen([sys.argv[0], "history"], start_new_session=True)),
+        ("󰗊  Lingo: fix how words are spelled", lambda: subprocess.Popen(
+            [sys.argv[0], "lingo"], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)),
         ("󰄨  Stats", lambda: _terminal("chttr stats")),
         ("󰒓  Edit settings", lambda: DT.open_editor(str(C.CONFIG_FILE))),
         ("󰓦  Check setup (doctor)", lambda: _terminal("chttr doctor")),
@@ -913,6 +924,13 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free one)")
     ui.add_argument("--no-browser", action="store_true", help="only print the link")
     ui.set_defaults(func=cmd_ui)
+
+    li = sub.add_parser("lingo", help="fix how chttr spells your words: pick them from past dictations, in your browser")
+    li.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free one)")
+    li.add_argument("--no-browser", action="store_true", help="only print the link")
+    li.add_argument("--idle-timeout", type=float, default=900, metavar="SECONDS",
+                    help="stop once the page has been closed this long (default 900; 0 = run until Ctrl+C)")
+    li.set_defaults(func=cmd_lingo)
 
     po = sub.add_parser("polish", help="clean up dictated text from stdin with Claude")
     po.add_argument("--app", help="name of the focused app, for tone/formatting")

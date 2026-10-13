@@ -5,6 +5,23 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Lingo (`chttr lingo`, the Lingo tab in `chttr ui`, and **Lingo: fix how words
+  are spelled** in the chttr menu): pick the words that came out wrong in a past
+  dictation, type the right spelling, and chttr uses it from the next dictation
+  on. Rename a spelling, drop one mis-hearing, add words by hand, and try a
+  sentence to see what would be typed. Started from the menu, the server stops
+  itself 15 minutes after the page is closed (`--idle-timeout`).
+
+### Changed
+- A heard phrase in the dictionary also matches when the recognizer puts a
+  comma or hyphen between its words ("Sora, Beth Ani").
+
+### Fixed
+- The dictation history menu on Omarchy drew each dictation in the icon column,
+  on top of its label, so the list couldn't be read. Rows now have an icon, the
+  dictation as the label and the time and app underneath.
+
 ## [1.0.0rc1] - 2026-10-13
 
 The launch candidate: everything above, documented for people who haven't met
