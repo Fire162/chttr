@@ -141,9 +141,9 @@ def _call(cfg: PolishCfg, effort: str, schema: dict, content: list[dict], max_to
         max_tokens=max_tokens,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
-        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
+        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},  # pyright: ignore[reportArgumentType]
         system=system,
-        messages=[{"role": "user", "content": content}],
+        messages=[{"role": "user", "content": content}],  # pyright: ignore[reportArgumentType]
     ) as stream:
         response = stream.get_final_message()
     if response.stop_reason == "refusal":

@@ -1,0 +1,21 @@
+name: Feature request
+description: An idea that would make chttr better for you
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does chttr get in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: This would send data somewhere new (a cloud API, another app). If so, describe what and why above.

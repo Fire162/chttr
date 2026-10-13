@@ -134,7 +134,7 @@ class Dictionary:
 
         def sub(m: re.Match) -> str:
             key = " ".join(m.group(1).lower().split())
-            return self.snippets.get(key, m.group(0))
+            return self.snippets.get(key, str(m.group(0)))
 
         return self._snippet_pattern.sub(sub, text)
 
@@ -171,7 +171,7 @@ class Dictionary:
 
     # ---- io ----------------------------------------------------------------
     @classmethod
-    def load(cls, path: Path = DICTIONARY_FILE) -> "Dictionary":
+    def load(cls, path: Path = DICTIONARY_FILE) -> Dictionary:
         if not path.exists():
             return cls()
         with path.open("rb") as fh:
@@ -201,5 +201,18 @@ class Dictionary:
         path.write_text("\n".join(lines) + "\n")
 
 
+_TOML_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "\r": "\\r"}
+
+
 def _q(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """A TOML basic string. Newlines and other control characters must be escaped, or a
+    multi-line snippet would corrupt the file."""
+    out = []
+    for ch in s:
+        if ch in _TOML_ESCAPES:
+            out.append(_TOML_ESCAPES[ch])
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'

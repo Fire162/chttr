@@ -1,0 +1,31 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+X-WR-CALNAME:rob@example.com
+BEGIN:VEVENT
+DTSTART:20261011T210000Z
+DTEND:20261011T213000Z
+SUMMARY:Weekly sync
+DESCRIPTION:Agenda: roadmap. Join: https://meet.google.com/abc-defg-hij
+ORGANIZER;CN=Dana Lee:mailto:dana@example.com
+ATTENDEE;CN=Dana Lee;PARTSTAT=ACCEPTED:mailto:dana@example.com
+ATTENDEE;CN=rob@example.com;PARTSTAT=ACCEPTED:mailto:rob@example.com
+ATTENDEE;CN=Ali Khan;PARTSTAT=DECLINED:mailto:ali@example.com
+ATTENDEE;CUTYPE=RESOURCE;CN=Room 4:mailto:room4@resource.example.com
+UID:weekly-1@example.com
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261011T220000Z
+DTEND:20261011T223000Z
+SUMMARY:Cancelled thing
+STATUS:CANCELLED
+UID:cancelled-1@example.com
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261011T230000Z
+DTEND:20261011T233000Z
+SUMMARY:Coffee with Sam
+ATTENDEE;CN=Sam Ortiz:mailto:sam@example.com
+UID:coffee-1@example.com
+END:VEVENT
+END:VCALENDAR

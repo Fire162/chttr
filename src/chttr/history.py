@@ -43,7 +43,7 @@ def _ago(when: datetime | None) -> str:
         return f"{max(1, int(secs // 60))}m ago"
     if secs < 86400:
         return f"{int(secs // 3600)}h ago"
-    return when.strftime("%b %-d")
+    return f"{when:%b} {when.day}"
 
 
 def pick(entries: list[dict], limit: int = 50) -> str | None:

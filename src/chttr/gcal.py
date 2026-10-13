@@ -15,7 +15,7 @@ import re
 import time
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .config import DATA_DIR
@@ -146,7 +146,7 @@ def _events(data: bytes, around: datetime, window: timedelta) -> tuple[list[Even
 def find_event(urls: list[str], code: str = "", when: datetime | None = None) -> Event | None:
     """The calendar event for a meeting: same Meet code within 12 hours if we know it,
     else the event with a Meet link (or attendees) that overlaps `when`."""
-    when = when or datetime.now(timezone.utc).astimezone()
+    when = when or datetime.now(UTC).astimezone()
     candidates: list[Event] = []
     for url in urls:
         try:
@@ -169,7 +169,7 @@ def find_event(urls: list[str], code: str = "", when: datetime | None = None) ->
 
 def upcoming(urls: list[str], hours: float = 24) -> list[Event]:
     """Events from now on (for `chttr meeting calendar` to show that the feed works)."""
-    now = datetime.now(timezone.utc).astimezone()
+    now = datetime.now(UTC).astimezone()
     out: list[Event] = []
     for url in urls:
         events, _ = _events(_fetch(url, max_age=0), now + timedelta(hours=hours / 2), timedelta(hours=hours / 2))

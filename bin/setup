@@ -8,11 +8,24 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 uv="$(command -v uv || true)"
 if [[ -z $uv ]] && command -v mise >/dev/null; then uv="$(mise which uv 2>/dev/null || true)"; fi
 if [[ -z $uv ]]; then
-  echo "chttr is installed with uv; installing it first (omarchy pkg add uv)."
-  omarchy pkg add uv
+  if command -v omarchy >/dev/null; then
+    echo "chttr is installed with uv; installing it first (omarchy pkg add uv)."
+    omarchy pkg add uv
+  else
+    echo "chttr is installed with uv; installing it first (https://astral.sh/uv)."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
   uv="$(command -v uv)"
 fi
 
-echo "Installing the chttr command (Python 3.14 and its packages)…"
-"$uv" tool install --python 3.14 --editable "$dir" --reinstall --quiet
+# whisper.cpp is optional (Parakeet is the default engine); keep it if the config uses it.
+extra=()
+config="${XDG_CONFIG_HOME:-$HOME/.config}/chttr/config.toml"
+if [[ -f $config ]] && grep -Eq '^[[:space:]]*name[[:space:]]*=[[:space:]]*"whisper"' "$config"; then
+  extra=(--with pywhispercpp)
+fi
+
+echo "Installing the chttr command (Python ${CHTTR_PYTHON:-3.14} and its packages)…"
+"$uv" tool install --python "${CHTTR_PYTHON:-3.14}" --editable "$dir" "${extra[@]}" --reinstall --quiet
 exec "$HOME/.local/bin/chttr" setup "$@"

@@ -13,7 +13,7 @@ APP = "chttr"
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP
 CONFIG_FILE = Path(os.environ["CHTTR_CONFIG"]).expanduser() if os.environ.get("CHTTR_CONFIG") else CONFIG_DIR / "config.toml"
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / APP
-RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/{APP}-{os.getuid()}")) / APP
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{APP}-{os.getuid()}") / APP
 SOCKET_PATH = RUNTIME_DIR / "chttr.sock"
 STATE_FILE = RUNTIME_DIR / "state"
 HISTORY_FILE = DATA_DIR / "history.jsonl"
@@ -95,8 +95,12 @@ api_key_file = "~/.config/chttr/anthropic-api-key"
 # Local alternative (fully offline): https://ollama.com, e.g. `ollama pull llama3.2`
 ollama_model = "llama3.2"
 ollama_url = "http://127.0.0.1:11434"
-# Tell the model which app is focused so it can adapt tone/formatting
+# Tell the model which app is focused (its window class, e.g. "Slack") so it can
+# adapt tone and formatting
 use_app_context = true
+# Also send the window title ("Re: Q3 budget - Mail"). It helps with names and
+# context, but titles can contain email subjects and document names.
+send_window_title = true
 
 [feedback]
 sounds = true
@@ -222,6 +226,7 @@ class PolishCfg:
     ollama_model: str = "llama3.2"
     ollama_url: str = "http://127.0.0.1:11434"
     use_app_context: bool = True
+    send_window_title: bool = True
     # legacy key, maps to backend = "none" when false
     enabled: bool = True
 
@@ -345,3 +350,23 @@ def write_default_config(path: Path = CONFIG_FILE) -> bool:
 def ensure_runtime_dir() -> Path:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     return RUNTIME_DIR
+
+
+def ensure_data_dir() -> Path:
+    """~/.local/share/chttr holds dictation history, meeting audio and voiceprints: yours only."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return DATA_DIR
+
+
+def open_private(path: Path, append: bool = True):
+    """Open a text file for writing that only you can read (created 0600)."""
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+    return os.fdopen(os.open(path, flags, 0o600), "a" if append else "w", encoding="utf-8")
+
+
+def too_open(path: Path) -> bool:
+    """True if a secret file is readable by other users."""
+    try:
+        return os.name == "posix" and bool(path.stat().st_mode & 0o077)
+    except OSError:
+        return False

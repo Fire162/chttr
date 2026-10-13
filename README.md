@@ -1,5 +1,9 @@
 # chttr
 
+[![CI](https://github.com/robjobbed/chttr/actions/workflows/ci.yml/badge.svg)](https://github.com/robjobbed/chttr/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
+
 Voice dictation and meeting transcripts for [Omarchy](https://omarchy.org).
 Hold **Insert**, talk, let go: the words land in whatever window has focus,
 cleaned up like you typed them. Join a Google Meet call and chttr can write the
@@ -8,10 +12,10 @@ meeting notes, with names next to every line.
 Speech recognition runs on your machine. Claude (optional) tidies dictation
 and writes meeting summaries.
 
-> **Early release (0.1).** Built and tested on one Omarchy 4 laptop. Dictation
-> and the meeting pipeline are tested with recorded audio; the Google Meet
-> extension is tested against a mock of Meet's page, not yet in many real calls.
-> Issues and fixes welcome.
+> **Early release (0.3).** Built and used daily on an Omarchy 4 laptop. The
+> logic is covered by a test suite that runs in CI on every change; the Google
+> Meet extension has been used in few real calls so far. Issues and fixes
+> welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - **Local speech-to-text** with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX, the
   model Omarchy's voxtype downloads), about 3× faster than whisper base.en on
@@ -54,7 +58,7 @@ Then click the microphone in the bar. That runs `bin/setup` in a terminal,
 which:
 
 1. installs the `chttr` command with [uv](https://docs.astral.sh/uv/)
-   (Python 3.14, from this checkout, so `omarchy plugin update robjobbed.chttr`
+   (Python 3.14 by default, 3.12+ works; from this checkout, so `omarchy plugin update robjobbed.chttr`
    brings new versions),
 2. downloads the speech model (Parakeet, ~670 MB, skipped if Omarchy's voxtype
    already has it) and the meeting models (~29 MB),
@@ -273,7 +277,7 @@ recorded. Tell people.
 | `chttr status [--follow] [--json]` | `idle` / `recording` / `transcribing`; `--json` matches the Omarchy bar indicator format |
 | `chttr transcribe file.wav [--raw] [--engine E] [-v]` | One-off transcription without the daemon |
 | `chttr polish [--app NAME]` | Clean up text from stdin |
-| `chttr doctor` | Check engine, cleanup backend and daemon |
+| `chttr doctor [--verify]` | Check engine, cleanup backend, daemon and key permissions; `--verify` hashes the models |
 | `chttr reload` | Re-read config.toml (switching engines reloads the model) |
 | `chttr config` | Create and print the config file |
 | `chttr setup` | Models, service, keybindings, Meet extension (what `bin/setup` runs) |
@@ -313,21 +317,45 @@ the primary selection in terminals) and delivers text. `history.py` is the
 picker and stats. The state file at `$XDG_RUNTIME_DIR/chttr/state` is what
 `status --follow` watches.
 
-`meeting.py` is the post-call pipeline (VAD, transcription, echo removal,
-clustering, naming, notes, Markdown), run as its own niced process.
-`meeting_recorder.py` captures the two channels, `diarize.py` holds the VAD,
-embeddings, clustering and voice memory, `gcal.py` the calendar, `notes.py`
-the Claude notes prompt, and `native_host.py` plus `extension/` the Meet side.
-`BarWidget.qml` and `manifest.json` make the repo an Omarchy plugin.
+The `meeting/` package is everything after the call: `recorder.py` captures
+the two channels, `pipeline.py` runs VAD, transcription, echo removal and
+clustering as its own niced process, `naming.py` decides who is who,
+`styles.py` and `render.py` write the notes and the Markdown, and `edit.py`
+handles renames. `diarize.py` holds the VAD, embeddings, clustering and voice
+memory, `gcal.py` the calendar, `notes.py` the Claude notes prompt, `models.py`
+the pinned model downloads, and `native_host.py` plus `extension/` the Meet
+side. `BarWidget.qml` and `manifest.json` make the repo an Omarchy plugin.
+
+## Development
+
+```bash
+uv sync --group dev && uv run pytest     # 120+ tests, no models or audio devices needed
+uv run ruff check . && uv run pyright
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout and guidelines, and
+[CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 
 ## Privacy
 
-Audio never leaves your computer. Dictated text goes to Anthropic for cleanup
-only if you add a key (or to a local Ollama). Meeting transcripts go to
-Anthropic for the summary only if you add a key; turn that off with
-`[meeting] summary = false`. Meeting audio is deleted after the notes are
-written unless you set `keep_audio = true`. The Meet extension talks only to
-the local chttr daemon. Your calendar's secret iCal URL is stored with mode 600.
+Audio never leaves your computer. Everything below is all that does, and only
+when you turn it on:
+
+| What | Where it goes | When | Turn it off |
+|---|---|---|---|
+| Dictated text (the transcript) | Anthropic, or your local Ollama | You added an API key / run Ollama | `[polish] backend = "none"` |
+| Focused app's window class (e.g. `Slack`) | Same, with the dictation | Cleanup is on | `[polish] use_app_context = false` |
+| Focused window's title | Same, with the dictation | Cleanup is on | `[polish] send_window_title = false` |
+| Selected text in command mode | Same | You use command mode | Don't use command mode |
+| Meeting transcript, invitees' names and emails, calendar title and description | Anthropic | You added an API key | `[meeting] summary = false` |
+| Calendar feed request | Google | You added a secret iCal address | Remove it from `calendar-urls` |
+| Model downloads (once, checksum-verified) | Hugging Face | `chttr setup` | Copy the models in by hand |
+
+Meeting audio is deleted once the notes are written unless you set
+`keep_audio = true`. Dictation history, meeting data and remembered voices stay
+in `~/.local/share/chttr`, readable only by you. The Meet extension talks only
+to the local daemon. Your calendar's secret iCal URL is stored with mode 600.
+To report a security problem, see [SECURITY.md](SECURITY.md).
 
 ## License
 

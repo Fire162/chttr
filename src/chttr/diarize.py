@@ -13,23 +13,21 @@ import json
 import logging
 import os
 import time
-import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 
+from . import models as M
 from .config import MODELS_DIR, VOICES_FILE
 
 log = logging.getLogger("chttr.diarize")
 
 SAMPLE_RATE = 16000
 MODELS = {
-    "silero-vad/silero_vad.onnx":
-        "https://huggingface.co/istupakov/silero-vad-onnx/resolve/main/silero_vad.onnx",
-    "wespeaker-resnet34/voxceleb_resnet34_LM.onnx":
-        "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx",
+    "silero-vad/silero_vad.onnx": M.SILERO_VAD,
+    "wespeaker-resnet34/voxceleb_resnet34_LM.onnx": M.WESPEAKER,
 }
 VAD_CHUNK_SECONDS = 600          # run the VAD over 10-minute pieces to bound memory
 MIN_EMBED_SECONDS = 1.2          # shorter utterances don't make reliable embeddings
@@ -40,17 +38,9 @@ VOICE_MATCH_ANYONE = 0.62        # ... when they are not on the invite
 
 
 def ensure_models() -> None:
-    for rel, url in MODELS.items():
-        path = MODELS_DIR / rel
-        if path.exists() and path.stat().st_size > 0:
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        log.info("downloading %s", url)
-        tmp = path.with_suffix(".part")
-        with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as fh:
-            while chunk := r.read(1 << 16):
-                fh.write(chunk)
-        tmp.rename(path)
+    """Download the VAD and speaker-embedding models (pinned and checksum-verified) if missing."""
+    for rel, spec in MODELS.items():
+        M.download(spec, MODELS_DIR / rel)
 
 
 def _session_options(threads: int):
@@ -133,7 +123,7 @@ def cluster(embeddings: np.ndarray, threshold: float = CLUSTER_THRESHOLD) -> np.
     active = np.ones(n, dtype=bool)
     while active.sum() > 1:
         masked = np.where(active[:, None] & active[None, :], sim, -np.inf)
-        i, j = np.unravel_index(np.argmax(masked), masked.shape)
+        i, j = (int(x) for x in np.unravel_index(np.argmax(masked), masked.shape))
         if masked[i, j] < threshold:
             break
         # Lance-Williams update for average linkage
@@ -192,7 +182,7 @@ def remember(voices: dict[str, Voice], name: str, email: str, embedding: np.ndar
     key = email.lower() if email else name.strip().lower()
     if not key:
         return
-    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
     weight = min(1.0, seconds / 60)       # a 20-second cameo counts for a third of a meeting
     v = voices.get(key)
     if v is None:

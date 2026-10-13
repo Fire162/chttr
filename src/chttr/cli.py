@@ -8,6 +8,7 @@ import logging
 import shutil
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from . import __version__
@@ -247,6 +248,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     b = backend(cfg.polish)
     hint = {"none": "  (raw text; add ~/.config/chttr/anthropic-api-key or run Ollama for cleanup + command mode)"}
     print(f"cleanup:     {b}{hint.get(b, '')}")
+    key_file = Path(cfg.polish.api_key_file).expanduser() if cfg.polish.api_key_file else None
+    if key_file and key_file.is_file() and C.too_open(key_file):
+        ok = False
+        print(f"api key:     PROBLEM: {key_file} is readable by other users; fix with: chmod 600 {key_file}")
+    if args.verify:
+        ok = _verify_models(cfg) and ok
     try:
         print(f"daemon:      {send('status').get('state')}")
     except DaemonNotRunning:
@@ -264,12 +271,35 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _verify_models(cfg) -> bool:
+    """Hash every model file against the pinned SHA-256."""
+    from . import diarize
+    from . import models as M
+    from .transcriber import resolve_parakeet
+
+    ok = True
+    checks = [(spec, C.MODELS_DIR / rel) for rel, spec in diarize.MODELS.items()]
+    try:
+        parakeet = resolve_parakeet(cfg.engine.parakeet_dir)
+        checks += [(spec, parakeet / spec.name) for spec in M.PARAKEET if spec.name != "config.json"]
+    except FileNotFoundError:
+        pass
+    for spec, path in checks:
+        if not path.exists():
+            print(f"verify:      {spec.name}: not downloaded yet")
+            continue
+        good = M.verify(spec, path)
+        ok = ok and good
+        print(f"verify:      {spec.name}: {'ok' if good else 'PROBLEM: does not match the pinned checksum'}")
+    return ok
+
+
 def _send_or_exit(command: str) -> dict:
     try:
         return send(command)
     except DaemonNotRunning as exc:
         print(exc, file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
 
 
 def cmd_meeting_control(args: argparse.Namespace) -> int:
@@ -536,7 +566,7 @@ def cmd_menu(args: argparse.Namespace) -> int:
     cfg = C.load_config()
     notes = [Path(m["markdown"]) for d in reversed(meeting_dirs())
              if (m := read_json(d / "meta.json", {}) or {}).get("markdown") and Path(m["markdown"]).exists()]
-    items: list[tuple[str, callable]] = []
+    items: list[tuple[str, Callable[[], object]]] = []
     if status is None:
         items.append(("󰑓  Start the chttr daemon", lambda: subprocess.run(["systemctl", "--user", "restart", "chttr"])))
     elif status.get("recording"):
@@ -654,6 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
     sa.set_defaults(func=cmd_stats)
 
     dr = sub.add_parser("doctor", help="check the engine, cleanup backend and daemon")
+    dr.add_argument("--verify", action="store_true", help="also hash every model file against its pinned SHA-256")
     dr.set_defaults(func=cmd_doctor)
 
     me = sub.add_parser("meeting", help="record meetings: transcripts with speaker names, summary and action items")

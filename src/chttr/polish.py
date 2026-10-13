@@ -109,7 +109,7 @@ def _claude(system: str, user: str, cfg: PolishCfg) -> str | None:
         max_tokens=4096,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
-        output_config={"effort": cfg.effort},
+        output_config={"effort": cfg.effort},  # pyright: ignore[reportArgumentType]
         system=system,
         messages=[{"role": "user", "content": user}],
     )
@@ -144,8 +144,10 @@ def _complete(system: str, user: str, cfg: PolishCfg) -> str | None:
 
 def _context(cfg: PolishCfg, app: str, title: str, style: str, vocabulary: list[str] | None) -> str:
     context = ""
-    if cfg.use_app_context and (app or title):
-        context += f"<focused_app>{app}</focused_app>\n<window_title>{title[:120]}</window_title>\n"
+    if cfg.use_app_context and app:
+        context += f"<focused_app>{app}</focused_app>\n"
+    if cfg.use_app_context and cfg.send_window_title and title:
+        context += f"<window_title>{title[:120]}</window_title>\n"
     if style:
         context += f"<style>{style}</style>\n"
     if vocabulary:
