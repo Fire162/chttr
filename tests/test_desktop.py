@@ -99,3 +99,11 @@ def test_report_mentions_the_ydotool_daemon(monkeypatch):
     monkeypatch.setattr(DT, "have", only("ydotool"))
     text = "\n".join(DT.report(DT.Desktop("wayland", "gnome")))
     assert "typing:      ydotool" in text and "ydotool needs its daemon" in text
+
+
+def test_hyprland_is_found_from_its_sockets_without_the_env_var(tmp_path):
+    (tmp_path / "hypr" / "abc123").mkdir(parents=True)
+    env = {"XDG_RUNTIME_DIR": str(tmp_path), "WAYLAND_DISPLAY": "wayland-1"}
+    assert DT.detect(env).compositor == "hyprland"
+    assert DT.detect({"XDG_CURRENT_DESKTOP": "Hyprland"}) == DT.Desktop("wayland", "hyprland")
+    assert DT.detect({"XDG_RUNTIME_DIR": str(tmp_path / "nothing"), "WAYLAND_DISPLAY": "w"}).compositor == "wlroots"

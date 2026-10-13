@@ -25,6 +25,7 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 log = logging.getLogger("chttr.desktop")
 
@@ -50,18 +51,33 @@ class Desktop:
         return f"{self.compositor} ({self.session})"
 
 
+def _hyprland_running(env: Mapping[str, str]) -> bool:
+    """Hyprland leaves its sockets in $XDG_RUNTIME_DIR/hypr. A systemd user service
+    doesn't always inherit HYPRLAND_INSTANCE_SIGNATURE, but hyprctl finds the
+    instance through these sockets anyway."""
+    runtime = env.get("XDG_RUNTIME_DIR", "")
+    hypr = Path(runtime) / "hypr" if runtime else None
+    try:
+        return bool(hypr and hypr.is_dir() and any(hypr.iterdir()))
+    except OSError:
+        return False
+
+
 def detect(env: Mapping[str, str] | None = None) -> Desktop:
     env = os.environ if env is None else env
     session = env.get("XDG_SESSION_TYPE", "").lower()
     if session not in ("wayland", "x11"):
         session = "wayland" if env.get("WAYLAND_DISPLAY") else "x11" if env.get("DISPLAY") else "unknown"
     current = env.get("XDG_CURRENT_DESKTOP", "").lower()
-    if env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if env.get("HYPRLAND_INSTANCE_SIGNATURE") or "hyprland" in current or _hyprland_running(env):
         comp = "hyprland"
-    elif env.get("SWAYSOCK"):
+        session = "wayland"
+    elif env.get("SWAYSOCK") or "sway" in current:
         comp = "sway"
-    elif env.get("NIRI_SOCKET"):
+        session = "wayland"
+    elif env.get("NIRI_SOCKET") or "niri" in current:
         comp = "niri"
+        session = "wayland"
     elif "kde" in current or env.get("KDE_FULL_SESSION"):
         comp = "kde"
     elif "gnome" in current or "unity" in current or "pop" in current:

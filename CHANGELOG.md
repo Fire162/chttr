@@ -17,6 +17,15 @@ chttr yet.
 - `docs/configuration.md`, every config key with its explanation, generated
   from the defaults (`scripts/gen-config-docs.py`; a test keeps it in sync).
 
+### Fixed
+- Hyprland is recognised even when the daemon's systemd environment lacks
+  `HYPRLAND_INSTANCE_SIGNATURE` (from `XDG_CURRENT_DESKTOP` or Hyprland's
+  sockets), so per-app modes keep working. When the compositor can't be told,
+  chttr bindings in a Hyprland or Sway config stop chttr from also reading the
+  keyboard, which would have fired every press twice.
+- `on_meeting_done` appended the Markdown path even when the command already
+  used `$1`.
+
 ### Changed
 - Release candidates (`vX.Y.ZrcN` tags) are published as GitHub pre-releases.
 - The Meet extension's version is the release without its pre-release suffix

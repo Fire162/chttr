@@ -155,7 +155,12 @@ def resolve(backend: str, compositor: str) -> str:
     """The backend "auto" stands for on this desktop."""
     if backend != "auto":
         return backend
-    if compositor in ("hyprland", "sway") and compositor_has_bindings(compositor):
+    # chttr bindings in the compositor's config win: reading the keyboard as well would
+    # fire every press twice. When we couldn't tell which compositor this is, any
+    # Hyprland/Sway config with chttr bindings counts (on GNOME or KDE it doesn't:
+    # those bindings belong to the other session).
+    unsure = compositor in ("wlroots", "unknown")
+    if compositor_has_bindings(compositor) or (unsure and any(compositor_has_bindings(c) for c in ("hyprland", "sway"))):
         return "compositor"
     if compositor in ("kde", "gnome") and portal_available():
         return "portal"
