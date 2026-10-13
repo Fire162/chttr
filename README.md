@@ -20,10 +20,11 @@ and writes meeting summaries.
 - **Local speech-to-text** with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX, the
   model Omarchy's voxtype downloads), about 3× faster than whisper base.en on
   CPU and more accurate. whisper.cpp is still available (`[engine] name = "whisper"`).
-- **Streaming recognition**: every pause is transcribed while you keep talking,
-  so letting go of the key leaves only the last second or so to recognize. A
-  20-second dictation is recognized in about 0.2 s after release instead of
-  0.75 s (`chttr bench` measures it on your machine).
+- **Streaming recognition**: what you said before a pause is transcribed while
+  you keep talking, so letting go of the key leaves only the last sentence or
+  two to recognize. A 20-second dictation is recognized in about a third of a
+  second after release instead of 0.7 s, with the same accuracy (`chttr bench`
+  measures it on your machine).
 - **Wispr-style cleanup** with Claude Haiku (a few hundred milliseconds), or a
   local Ollama model: filler words removed, punctuation and casing fixed,
   self-corrections applied ("Tuesday, no, Wednesday"), spoken formatting

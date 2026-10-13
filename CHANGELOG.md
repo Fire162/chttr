@@ -12,9 +12,11 @@ contains everything listed under 0.3.0 (tests, CI, pinned models, privacy
 hardening), which was not released on its own.
 
 ### Added
-- Streaming recognition (`[engine] streaming = true`, the default): every pause
-  is transcribed in the background while you keep talking, so after release
-  only the last stretch is left to recognize. Live captions come from the same
+- Streaming recognition (`[engine] streaming = true`, the default): once you
+  have said a few seconds' worth, the next pause closes a segment that is
+  transcribed in the background while you keep talking, so after release only
+  the last stretch is left to recognize. Segments keep at least 4 seconds of
+  speech, so accuracy matches a single pass over the whole recording. Live captions come from the same
   passes instead of re-transcribing the last 8 seconds every 0.8 seconds.
 - `[polish] cleanup_model`, default `claude-haiku-5-5`: dictation cleanup and
   command mode run on Haiku with thinking off, which answers in a few hundred

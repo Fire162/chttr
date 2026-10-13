@@ -30,7 +30,8 @@ def test_release_point_is_just_after_the_last_word():
     assert end == loud[-1] + 1 + int(0.2 * S.CHUNKS_PER_SECOND)
 
 
-def test_stream_segments_close_at_the_pauses_before_release():
+def test_stream_segments_close_at_the_pauses_before_release(monkeypatch):
+    monkeypatch.setattr(S, "MIN_SPEECH", 0.6)
     levels = bench.chunk_levels(tone_with_pauses())
     end = bench.release_point(levels, -38)
     segments = bench.stream_segments(levels, -38, end)
@@ -48,6 +49,8 @@ class FakeTranscriber:
 
 def test_run_and_report(tmp_path, monkeypatch):
     import chttr.transcriber
+
+    monkeypatch.setattr(S, "MIN_SPEECH", 0.6)
 
     monkeypatch.setattr(chttr.transcriber, "Transcriber", FakeTranscriber)
     wav = tmp_path / "hello.wav"

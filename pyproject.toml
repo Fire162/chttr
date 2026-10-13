@@ -73,6 +73,7 @@ ignore = [
 testpaths = ["tests"]
 markers = [
     "model: needs the speech models downloaded (slow; run with -m model)",
+    "real_minimum: streaming test that keeps the default segment length",
 ]
 addopts = "-m 'not model'"
 

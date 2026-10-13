@@ -25,11 +25,12 @@ log = logging.getLogger("chttr.streaming")
 
 CHUNKS_PER_SECOND = 50          # the recorder's 20 ms chunks
 CHUNK_FRAMES = 320
-PAUSE = 0.45                    # silence that ends a segment
-MIN_SPEECH = 0.6                # don't close a segment with less speech than this
+PAUSE = 0.5                     # silence that ends a segment
+MIN_SPEECH = 4.0                # a segment needs this much speech: shorter ones lose context and accuracy
 MAX_SEGMENT = 20.0              # force a cut (at the quietest moment) in a long unbroken run
 POLL = 0.1
 CAPTION_EVERY = 0.7
+CAPTION_MIN = 0.6               # show captions once this much audio is waiting
 
 
 class Source(Protocol):
@@ -106,7 +107,7 @@ class Streamer:
                     self._caption(self.text)
                     captioned = n
                 elif (self.on_caption and n != captioned and time.monotonic() - last_caption >= CAPTION_EVERY
-                      and n - self.done >= MIN_SPEECH * CHUNKS_PER_SECOND):
+                      and n - self.done >= CAPTION_MIN * CHUNKS_PER_SECOND):
                     last_caption, captioned = time.monotonic(), n
                     partial = self._recognize(self.source.audio_range(self.done, n))
                     if not self._stop.is_set():

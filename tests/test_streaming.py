@@ -4,11 +4,27 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
 from chttr import streaming as S
 
 LOUD, QUIET = -20.0, -60.0
 THRESHOLD = -38.0
+
+
+@pytest.fixture(autouse=True)
+def short_segments(monkeypatch, request):
+    """The cutting logic is easier to read with short segments; the default (4 s of
+    speech per segment, for accuracy) has its own test below."""
+    if "real_minimum" not in request.keywords:
+        monkeypatch.setattr(S, "MIN_SPEECH", 0.6)
+
+
+@pytest.mark.real_minimum
+def test_default_minimum_keeps_short_sentences_together():
+    lv = levels(("speech", 2.0), ("pause", 0.7), ("speech", 1.5), ("pause", 0.7), ("speech", 2.0), ("pause", 0.7))
+    cut = S.find_cut(lv, THRESHOLD)
+    assert cut is not None and cut > 2 * 50 + 35 + 1.5 * 50     # not after the first 2-second sentence
 
 
 def levels(*parts: tuple[str, float]) -> list[float]:
