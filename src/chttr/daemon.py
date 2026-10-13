@@ -12,12 +12,16 @@ import subprocess
 import sys
 import threading
 import time
+import wave
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 
 from . import config as C
+from . import context as CX
+from . import devmode
 from . import polish as P
 from .config import Config, Mode
 from .dictionary import Dictionary
@@ -46,6 +50,8 @@ LAYER_SHELL_LIBS = [Path(d) / name
 QUIET_PEAK_DB = -45.0                   # below this the mic is probably not picking anything up
 CAPTION_INTERVAL = 0.8                  # seconds between live-caption passes
 CAPTION_WINDOW = 8.0                    # only the last this-many seconds are re-transcribed
+DOUBLE_TAP = 0.45                       # a second press this soon after a short tap: hands-free
+TAP = 0.35                              # recordings shorter than this are taps, not dictations
 CALL_TIMEOUT = 90                       # no word from the Meet tab for this long: the call is over
 
 
@@ -87,10 +93,15 @@ class Daemon:
         self.next_delivery = 0
         self.delivery = threading.Condition()
         self.hotkeys = None
+        self.last_tap = 0.0
+        self.field: Future | None = None             # the focused text field, read at key press
+        self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chttr-context")
+        self.offered: set[tuple[str, str]] = set()   # corrections already offered this session
         self._stop = threading.Event()
         C.MEETING_STATE_FILE.unlink(missing_ok=True)
         self._write_state(IDLE)
         self._tighten_permissions()
+        self._prune_audio()
 
     def _tighten_permissions(self) -> None:
         """Files written by versions before 0.3 were created with the default umask."""
@@ -162,7 +173,7 @@ class Daemon:
 
     def _on_level(self, rms: float, peak_db: float) -> None:
         rms_db = 20 * np.log10(max(rms, 1e-6))
-        if rms_db > self.cfg.audio.speech_threshold_db:
+        if rms_db > self.cfg.audio.threshold_db:
             self.heard_speech = True
             self.last_speech = time.monotonic()
         self._overlay_send(f"{rms:.5f} {peak_db:.1f}")
@@ -186,7 +197,7 @@ class Daemon:
             prompt = Dictionary.load().whisper_prompt()
             self.streamer = Streamer(
                 self.recorder, lambda audio: self.transcriber.transcribe(audio, prompt),
-                self.cfg.audio.speech_threshold_db,
+                self.cfg.audio.threshold_db,
                 on_caption=(lambda text: self._overlay_send("caption " + text)) if captions else None,
             ).start()
             return
@@ -429,15 +440,22 @@ class Daemon:
     def _press(self, kind: str) -> dict:
         """A key press. Reading the focused window and grabbing the selection talk to
         the compositor and the app, so they run without holding the lock."""
+        with self.lock:
+            if kind == PTT and self.recorder.active and self.kind == HANDSFREE:
+                return self._stop_and_transcribe()         # a tap ends hands-free
         if not self._press_begin(kind):
             return {"ok": True, "state": self.state, "message": "already recording"}
-        return self._press_finish(kind)
+        return self._press_finish(self.kind)
 
     def _press_begin(self, kind: str) -> bool:
         """Mark a recording as starting (instant). False if one is already going."""
         with self.lock:
             if self.recorder.active or self.starting:
                 return False
+            if kind == PTT and self.cfg.audio.double_tap and time.monotonic() - self.last_tap < DOUBLE_TAP:
+                kind = HANDSFREE                            # double tap: hands-free until the next tap
+                self.last_tap = 0.0
+                log.info("double tap: hands-free")
             self.starting, self.release_requested, self.kind = True, False, kind
             return True
 
@@ -445,7 +463,7 @@ class Daemon:
         """A press from the in-daemon hotkeys: marked as started right away, so the
         matching release (handled next, on the same thread) can't overtake it."""
         if self._press_begin(kind):
-            threading.Thread(target=self._press_finish, args=(kind,), daemon=True).start()
+            threading.Thread(target=self._press_finish, args=(self.kind,), daemon=True).start()
 
     def on_hotkey(self, action: str, pressed: bool) -> None:
         """Key events from hotkeys.py (GNOME/KDE portal, or evdev)."""
@@ -454,6 +472,8 @@ class Daemon:
                 self.handle("release")
             elif self.recorder.active and self.kind in (PTT, COMMAND):
                 self.handle("release")          # pressed again: a release got lost somewhere
+            elif self.recorder.active and self.kind == HANDSFREE and action == "dictate":
+                self.handle("stop")             # a tap ends hands-free
             else:
                 self.press_async(PTT if action == "dictate" else COMMAND)
         elif pressed and action == "hands_free":
@@ -485,6 +505,8 @@ class Daemon:
 
     def _start(self, kind: str, app: str, title: str, selection: str) -> dict:
         self.kind = kind
+        want_field = self.cfg.polish.screen_context != "off" or self.cfg.history.learn_from_edits
+        self.field = self.pool.submit(CX.read_field, SYSTEM_PYTHON) if want_field and kind != COMMAND else None
         self.app, self.title, self.selection = app, title, selection
         self.heard_speech = False
         self.last_speech = time.monotonic()
@@ -513,6 +535,8 @@ class Daemon:
             return {"ok": True, "state": self.state, "message": "not recording"}
         audio, secs = self.recorder.stop()
         peak_db = self.recorder.peak_db
+        if self.kind == PTT and secs < TAP:
+            self.last_tap = time.monotonic()
         self._log_dictation()
         self.jobs += 1
         seq, self.job_seq = self.job_seq, self.job_seq + 1
@@ -522,7 +546,8 @@ class Daemon:
         self._restore_mute_state()
         self.feedback.play("stop")
         self.feedback.notify("Transcribing…", f"{secs:.1f}s of audio, peak {peak_db:.0f} dB", timeout_ms=0)
-        job = (seq, audio, secs, peak_db, self.kind, self.app, self.title, self.selection, captions)
+        job = (seq, audio, secs, peak_db, self.kind, self.app, self.title, self.selection, captions, self.field)
+        self.field = None
         threading.Thread(target=self._process, args=job, daemon=True).start()
         return {"ok": True, "state": self.state, "seconds": round(secs, 1), "peak_db": round(peak_db, 1)}
 
@@ -553,7 +578,8 @@ class Daemon:
             self.delivery.notify_all()
 
     def _process(self, seq: int, audio: np.ndarray, secs: float, peak_db: float, kind: str,
-                 app: str, title: str, selection: str, captions: threading.Thread | Streamer | None) -> None:
+                 app: str, title: str, selection: str, captions: threading.Thread | Streamer | None,
+                 field_future: Future | None = None) -> None:
         raw = text = ""
         method = ""
         mode: Mode | None = None
@@ -573,9 +599,12 @@ class Daemon:
             log.info("%s %.1fs audio (peak %.0f dB) -> %.2fs after release: %r",
                      self.transcriber.engine.name, secs, peak_db, time.monotonic() - t0, raw)
             if not raw:
-                self._no_speech(secs, peak_db)
+                if secs >= TAP:                     # a tap (maybe half of a double tap) is not a dictation
+                    self._no_speech(secs, peak_db)
                 return
-            fixed = dictionary.apply(raw)
+            field = self._field(field_future)
+            names = CX.names_in(field.text) if field and self.cfg.polish.screen_context != "off" else []
+            fixed = dictionary.apply(raw, names)
             if fixed != raw:
                 log.info("dictionary: %r", fixed)
             mode = self.cfg.mode_for(app)
@@ -584,7 +613,12 @@ class Daemon:
                 if not text:
                     return
             else:
-                text = self._polish(fixed, app, title, mode, dictionary)
+                coded = devmode.transform(fixed, bool(mode and mode.is_code))
+                keep = devmode.keep_list(fixed, coded)
+                if coded != fixed:
+                    log.info("dev mode: %r", coded)
+                text = self._polish(coded, app, title, mode, dictionary, keep, names,
+                                    field.before if field and self.cfg.polish.screen_context == "full" else "")
                 text = dictionary.expand_snippets(text)
             self._wait_turn(seq)
             method = deliver(text, self.cfg.output,
@@ -592,6 +626,10 @@ class Daemon:
                              trailing_space=False if kind == COMMAND else (mode.trailing_space if mode else None),
                              allow_paste=not (mode and mode.name == "terminal"))
             label = "Replaced" if kind == COMMAND and selection else "Typed"
+            if self.cfg.history.learn_from_edits and kind != COMMAND and method in ("type", "paste"):
+                timer = threading.Timer(8.0, self._learn_from_edits, args=(text,))
+                timer.daemon = True
+                timer.start()
             if method == "clipboard":
                 self.feedback.notify("Copied to clipboard", text[:200], timeout_ms=4000)
             else:
@@ -606,7 +644,61 @@ class Daemon:
                 self.jobs -= 1
                 self._refresh_state()
             if raw and self.cfg.history.enabled:
-                self._append_history(raw, text, app, secs, method, kind, mode.name if mode else "")
+                self._append_history(raw, text, app, secs, method, kind, mode.name if mode else "", audio)
+
+    @staticmethod
+    def _field(future: Future | None) -> CX.Field | None:
+        if future is None:
+            return None
+        try:
+            return future.result(timeout=0.5)       # usually done long before the key is released
+        except Exception:  # noqa: BLE001 - screen context is optional
+            return None
+
+    def _learn_from_edits(self, typed: str) -> None:
+        """A few seconds after typing: did you fix a name we got wrong? Offer to learn it."""
+        field = CX.read_field(SYSTEM_PYTHON, timeout=0.8, before=2000, after=2000)
+        if field is None:
+            return
+        for c in CX.corrections(typed, field.text):
+            if (c.heard, c.right) in self.offered:
+                continue
+            self.offered.add((c.heard, c.right))
+            log.info("you changed %r to %r", c.heard, c.right)
+            try:
+                out = subprocess.run(["notify-send", "-a", "chttr", "-t", "15000", "-A", "learn=Learn it",
+                                      "--wait", f"Learn \u201c{c.right}\u201d?",
+                                      f"You changed \u201c{c.heard}\u201d to \u201c{c.right}\u201d. "
+                                      "chttr can spell it that way from now on."],
+                                     capture_output=True, text=True, timeout=30).stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                return
+            if out == "learn":
+                d = Dictionary.load()
+                d.learn(c.right, [c.heard])
+                d.save()
+                self.feedback.notify(f"Learned \u201c{c.right}\u201d", timeout_ms=2500)
+
+    @staticmethod
+    def _save_audio(audio: np.ndarray, when: datetime) -> str:
+        C.HISTORY_AUDIO_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = C.HISTORY_AUDIO_DIR / f"{when:%Y%m%d-%H%M%S-%f}.wav"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh, wave.open(fh, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+        return path.name
+
+    def _prune_audio(self) -> None:
+        days = self.cfg.history.keep_audio_days
+        if not C.HISTORY_AUDIO_DIR.exists():
+            return
+        cutoff = time.time() - days * 86400
+        for f in C.HISTORY_AUDIO_DIR.glob("*.wav"):
+            if days <= 0 or f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
 
     def _no_speech(self, secs: float, peak_db: float) -> None:
         if peak_db < QUIET_PEAK_DB:
@@ -616,8 +708,9 @@ class Daemon:
         else:
             self.feedback.notify("No speech detected", f"{secs:.1f}s, peak {peak_db:.0f} dB", timeout_ms=2500)
 
-    def _polish(self, text: str, app: str, title: str, mode: Mode | None, dictionary: Dictionary) -> str:
-        if mode and not mode.polish:
+    def _polish(self, text: str, app: str, title: str, mode: Mode | None, dictionary: Dictionary,
+                keep: list[str] | None = None, names: list[str] | None = None, screen_text: str = "") -> str:
+        if (mode and not mode.polish) or self.cfg.polish.level == "none":
             return text
         if P.quick_path(text, self.cfg.polish.quick_max_words):
             # Nothing for a model to fix. Terminals and editors still get no trailing period.
@@ -629,8 +722,9 @@ class Daemon:
             return text
         try:
             t1 = time.monotonic()
-            out = P.polish(text, self.cfg.polish, app, title, dictionary.vocabulary,
-                           style=mode.style if mode else "", keep=list(dictionary.snippets))
+            vocabulary = dictionary.vocabulary + (names or [] if self.cfg.polish.screen_context in ("names", "full") else [])
+            out = P.polish(text, self.cfg.polish, app, title, vocabulary, style=mode.style if mode else "",
+                           keep=list(dictionary.snippets) + (keep or []), screen_text=screen_text)
             log.info("polish (%s) %.2fs: %r", mode.name if mode else "default", time.monotonic() - t1, out)
             return out
         except Exception as exc:  # noqa: BLE001 - any failure falls back to raw text
@@ -661,15 +755,17 @@ class Daemon:
             self.feedback.notify("Command failed", f"{type(exc).__name__}: {str(exc)[:160]}", urgency="normal", timeout_ms=8000)
             return ""
 
-    def _append_history(self, raw: str, text: str, app: str, secs: float, method: str, kind: str, mode_name: str) -> None:
+    def _append_history(self, raw: str, text: str, app: str, secs: float, method: str, kind: str, mode_name: str,
+                        audio: np.ndarray | None = None) -> None:
         try:
             C.ensure_data_dir()
+            now = datetime.now(UTC)
+            record = {"ts": now.isoformat(timespec="seconds"), "seconds": round(secs, 1), "app": app, "kind": kind,
+                      "mode": mode_name, "raw": raw, "text": text, "output": method}
+            if self.cfg.history.keep_audio_days > 0 and audio is not None and len(audio):
+                record["audio"] = self._save_audio(audio, now)
             with C.open_private(C.HISTORY_FILE) as fh:
-                fh.write(json.dumps({
-                    "ts": datetime.now(UTC).isoformat(timespec="seconds"),
-                    "seconds": round(secs, 1), "app": app, "kind": kind, "mode": mode_name,
-                    "raw": raw, "text": text, "output": method,
-                }) + "\n")
+                fh.write(json.dumps(record) + "\n")
         except OSError as exc:
             log.warning("history write failed: %s", exc)
 

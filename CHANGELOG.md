@@ -5,6 +5,35 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-13
+
+Wispr Flow parity for dictation.
+
+### Added
+- Cleanup levels (`[polish] level`): `light` keeps your exact words and only
+  punctuates, `medium` (the default) is the cleanup so far, `high` edits like a
+  careful editor, `none` types the raw transcript.
+- Developer dictation (`devmode.py`): spoken identifier casing ("camel case
+  user id" -> `userId`, plus snake, kebab, Pascal and constant case) anywhere,
+  and file mentions ("at src slash app dot ts" -> `@src/app.ts`) in code
+  editors and terminals. The results are passed to the cleanup as verbatim.
+- Screen context (`[polish] screen_context`, AT-SPI): names near the cursor
+  correct sound-alike words. `local` (the default) keeps them on this machine;
+  `names` also gives them to the cleanup model; `full` also sends up to 600
+  characters before the cursor.
+- Learning from your edits (`[history] learn_from_edits`): eight seconds after
+  typing, chttr looks at the field again; if you replaced a word with a
+  similar-sounding name, a notification offers to learn the spelling.
+- Double-tap the dictation key for hands-free; tap again to stop
+  (`[audio] double_tap`).
+- Whisper mode (`[audio] whisper_mode`): a lower speech threshold and up to
+  30x gain for quiet speech. Clearly quiet recordings are raised a little even
+  without it.
+- `chttr history --play [N]` replays a dictation's audio when
+  `[history] keep_audio_days` keeps it (off by default; files are 0600 and
+  pruned on daemon start).
+- `chttr doctor --mic`: record four seconds, show the level and the transcript.
+
 ## [0.5.0] - 2026-10-13
 
 Linux-wide: GNOME, KDE Plasma, Sway, niri and X11 alongside Hyprland/Omarchy.
@@ -127,7 +156,8 @@ personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
 Omarchy plugin.
 
-[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/robjobbed/chttr/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/robjobbed/chttr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/robjobbed/chttr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/robjobbed/chttr/compare/v0.2.1...v0.4.0

@@ -83,6 +83,17 @@ def trim_silence(audio: np.ndarray, threshold_db: float, pad: float = 0.3) -> np
     return audio[start:end]
 
 
+def boost_quiet(audio: np.ndarray, whisper: bool = False, target_peak: float = 0.5) -> np.ndarray:
+    """Raise a quiet recording toward `target_peak`: the recognizer does better on
+    whispered or far-from-the-mic speech at a normal level. Normally only clearly
+    quiet audio (peak under 0.1) is raised, by at most 6x; in whisper mode anything
+    under the target, by up to 30x."""
+    peak = float(np.abs(audio).max()) if len(audio) else 0.0
+    if peak <= 0 or peak >= (target_peak if whisper else 0.1):
+        return audio
+    return (audio * min(target_peak / peak, 30.0 if whisper else 6.0)).astype(np.float32)
+
+
 def _clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     if not text or _NON_SPEECH.match(text) or text.lower() in _HALLUCINATIONS:
@@ -160,7 +171,8 @@ class Transcriber:
     def __init__(self, cfg: Config) -> None:
         self.lock = threading.Lock()
         self.engine = ParakeetTranscriber(cfg) if cfg.engine.name == "parakeet" else WhisperTranscriber(cfg)
-        self.threshold_db = cfg.audio.speech_threshold_db
+        self.threshold_db = cfg.audio.threshold_db
+        self.boost = cfg.audio.whisper_mode
         log.info("%s ready", self.engine.name)
 
     @property
@@ -173,5 +185,6 @@ class Transcriber:
             audio = trim_silence(audio, self.threshold_db)
         if len(audio) < SAMPLE_RATE * 0.3:  # < 0.3 s
             return ""
+        audio = boost_quiet(audio, whisper=self.boost)
         with self.lock:
             return _clean(self.engine.recognize(audio, vocabulary_prompt))

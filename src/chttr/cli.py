@@ -227,6 +227,16 @@ def cmd_history(args: argparse.Namespace) -> int:
             when = _local(e.get("ts", ""))
             print(f"{when.strftime('%m-%d %H:%M') if when else '?':11}  {e.get('app', '') or '-':12.12}  {e.get('text', '')}")
         return 0
+    if args.play:
+        with_audio = [e for e in entries if e.get("audio") and (C.HISTORY_AUDIO_DIR / e["audio"]).exists()]
+        if not with_audio:
+            print("no dictation audio kept (set [history] keep_audio_days in the config)", file=sys.stderr)
+            return 1
+        e = with_audio[-min(args.play, len(with_audio))]
+        print(f"{e.get('ts', '')}  {e.get('text', '')}")
+        import subprocess
+
+        return subprocess.run(["pw-play", str(C.HISTORY_AUDIO_DIR / e["audio"])], check=False).returncode
     text = pick(entries)
     if text is None:
         return 130
@@ -272,6 +282,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"api key:     PROBLEM: {key_file} is readable by other users; fix with: chmod 600 {key_file}")
     if args.verify:
         ok = _verify_models(cfg) and ok
+    if args.mic:
+        ok = _mic_check(cfg) and ok
     try:
         print(f"daemon:      {send('status').get('state')}")
     except DaemonNotRunning:
@@ -301,6 +313,30 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     hosts = [d.name for d, _ in BROWSER_DIRS if (d / "NativeMessagingHosts" / f"{HOST_NAME}.json").exists()]
     print(f"meet ext:    {'registered for ' + ', '.join(hosts) if hosts else 'not installed (chttr meeting install)'}")
     return 0 if ok else 1
+
+
+def _mic_check(cfg, seconds: float = 4.0) -> bool:
+    """Record a few seconds, show the level and what the recognizer heard."""
+    from .recorder import Recorder
+    from .transcriber import Transcriber
+
+    print(f"mic:         say something for {seconds:.0f} seconds…", flush=True)
+    rec = Recorder(cfg.audio.device)
+    try:
+        rec.start()
+    except RuntimeError as exc:
+        print(f"mic:         PROBLEM: {exc}")
+        return False
+    time.sleep(seconds)
+    audio, _ = rec.stop()
+    peak = rec.peak_db
+    verdict = "PROBLEM: silent (muted, or the wrong input device?)" if peak < -45 else \
+        "quiet; speak up or try [audio] whisper_mode = true" if peak < -25 else \
+        "clipping; lower the input volume" if peak > -1 else "good"
+    print(f"mic:         peak {peak:.0f} dB: {verdict}")
+    text = Transcriber(cfg).transcribe(audio)
+    print(f"heard:       {text or '(nothing)'}")
+    return peak >= -45 and bool(text)
 
 
 def _verify_models(cfg) -> bool:
@@ -711,6 +747,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     hi = sub.add_parser("history", help="pick a past dictation and type it again")
     hi.add_argument("--print", type=int, nargs="?", const=20, metavar="N", help="print the last N instead")
+    hi.add_argument("--play", type=int, nargs="?", const=1, metavar="N",
+                    help="play the audio of the Nth most recent dictation (needs [history] keep_audio_days)")
     hi.set_defaults(func=cmd_history)
 
     sa = sub.add_parser("stats", help="words dictated, speaking speed, time saved")
@@ -719,6 +757,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     dr = sub.add_parser("doctor", help="check the engine, cleanup backend and daemon")
     dr.add_argument("--verify", action="store_true", help="also hash every model file against its pinned SHA-256")
+    dr.add_argument("--mic", action="store_true", help="also record 4 seconds and show the level and the transcript")
     dr.set_defaults(func=cmd_doctor)
 
     me = sub.add_parser("meeting", help="record meetings: transcripts with speaker names, summary and action items")
