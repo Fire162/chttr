@@ -5,6 +5,25 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-13
+
+Integrations.
+
+### Added
+- `chttr connect slack|notion|hubspot|webhook` and `chttr send`: meeting notes to
+  a Slack channel (incoming webhook, formatted blocks), a Notion page (headings,
+  bullets, to-dos), HubSpot (a note and a task per action item on the attendees'
+  contacts, matched by email) or any webhook (JSON, HMAC-SHA256 signed when you
+  give a secret).
+- The "notes saved" notification offers a "Send to …" button per connected
+  destination (`[integrations] send = "ask"`, the default); `send = "always"`
+  sends automatically, optionally only for calendar titles matching
+  `auto_titles`.
+- `[integrations] on_meeting_done`: your own script after every meeting
+  (Markdown path as `$1`, the meeting as JSON on stdin).
+- Secrets live in the desktop keyring through libsecret's `secret-tool`, or a
+  0600 file when there is no keyring; `chttr doctor` shows which.
+
 ## [0.8.0] - 2026-10-13
 
 Ask your meetings.
@@ -200,7 +219,8 @@ personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
 Omarchy plugin.
 
-[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/robjobbed/chttr/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/robjobbed/chttr/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/robjobbed/chttr/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/robjobbed/chttr/compare/v0.5.0...v0.6.0

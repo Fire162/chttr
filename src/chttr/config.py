@@ -158,6 +158,20 @@ keep_audio_days = 0
 # machine). If you corrected a name chttr got wrong, offer to learn it.
 learn_from_edits = true
 
+[integrations]
+# Meeting notes to Slack, Notion, HubSpot or a webhook (connect with: chttr connect).
+#   "ask"    - the notes notification has a "Send to ..." button per destination
+#   "always" - send to every connected destination without asking (for meetings
+#              whose calendar title matches auto_titles, if set)
+#   "never"
+send = "ask"
+auto_titles = ""
+# HubSpot: also create a task per action item, on the attendees' contacts
+hubspot_tasks = true
+# Your own script after every meeting: gets the Markdown path as $1 and the
+# meeting (notes, transcript, speakers) as JSON on stdin. Runs without asking.
+on_meeting_done = ""
+
 [hotkeys]
 # Who catches the keys:
 #   "auto"       - Hyprland/Sway: the compositor's bindings (chttr setup adds them);
@@ -329,6 +343,14 @@ class HistoryCfg:
 
 
 @dataclass
+class IntegrationsCfg:
+    send: str = "ask"
+    auto_titles: str = ""
+    hubspot_tasks: bool = True
+    on_meeting_done: str = ""
+
+
+@dataclass
 class HotkeysCfg:
     backend: str = "auto"
     dictate: str = "Insert"
@@ -387,6 +409,7 @@ class Config:
     feedback: FeedbackCfg = field(default_factory=FeedbackCfg)
     history: HistoryCfg = field(default_factory=HistoryCfg)
     hotkeys: HotkeysCfg = field(default_factory=HotkeysCfg)
+    integrations: IntegrationsCfg = field(default_factory=IntegrationsCfg)
     meeting: MeetingCfg = field(default_factory=MeetingCfg)
     modes: list[Mode] = field(default_factory=list)
 
@@ -422,7 +445,7 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
         return cfg
     with path.open("rb") as fh:
         data = tomllib.load(fh)
-    for section in ("engine", "whisper", "audio", "output", "polish", "feedback", "history", "hotkeys", "meeting"):
+    for section in ("engine", "whisper", "audio", "output", "polish", "feedback", "history", "hotkeys", "integrations", "meeting"):
         if isinstance(data.get(section), dict):
             _fill(getattr(cfg, section), data[section])
     if isinstance(data.get("modes"), list):
@@ -439,6 +462,8 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
         raise ValueError(f"hotkeys.backend must be auto, compositor, portal, evdev or none (got {cfg.hotkeys.backend!r})")
     if cfg.output.typer not in ("auto", "wtype", "ydotool", "xdotool", "dotool"):
         raise ValueError(f"output.typer must be auto, wtype, ydotool, xdotool or dotool (got {cfg.output.typer!r})")
+    if cfg.integrations.send not in ("ask", "always", "never"):
+        raise ValueError(f"integrations.send must be ask, always or never (got {cfg.integrations.send!r})")
     if cfg.polish.level not in ("none", "light", "medium", "high"):
         raise ValueError(f"polish.level must be none, light, medium or high (got {cfg.polish.level!r})")
     if cfg.polish.screen_context not in ("off", "local", "names", "full"):

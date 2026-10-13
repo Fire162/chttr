@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -118,6 +119,95 @@ def cmd_bench(args: argparse.Namespace) -> int:
     out = {"json": bench.to_json, "markdown": bench.markdown}.get(args.format, bench.report)
     print(out(cfg.engine.name, load_ms, results))
     return 0
+
+
+def cmd_connect(args: argparse.Namespace) -> int:
+    """Connect (or list / remove) a destination for meeting notes."""
+    import getpass
+    import json as _json
+
+    from . import integrations as I
+    from . import vault
+
+    if args.remove:
+        print(f"disconnected {args.service}" if vault.remove(args.service) else f"{args.service} wasn't connected")
+        return 0
+    if args.service is None:
+        for d in I.DESTINATIONS:
+            print(f"  {I.label(d):8} {'connected' if vault.load(d) else '-'}")
+        print("\nsecrets: " + ("desktop keyring (secret-tool)" if vault.keyring_available()
+                                 else f"{vault._file()} (install libsecret's secret-tool to use the keyring)"))
+        return 0
+
+    def ask(prompt: str, secret: bool = True) -> str:
+        value = (getpass.getpass(prompt) if secret else input(prompt)).strip()
+        if not value:
+            raise SystemExit("nothing entered; not connected")
+        return value
+
+    s = args.service
+    if s == "slack":
+        print("Create an incoming webhook for the channel: https://api.slack.com/messaging/webhooks")
+        value = ask("Webhook URL (https://hooks.slack.com/services/…): ")
+        if not value.startswith("https://hooks.slack.com/"):
+            raise SystemExit("that isn't a Slack incoming-webhook URL")
+    elif s == "notion":
+        print("Create an internal integration (https://www.notion.so/my-integrations), then share the page that")
+        print("should hold your meeting notes with it (••• > Connections).")
+        token = ask("Integration secret (ntn_… or secret_…): ")
+        page = ask("Parent page link or id: ", secret=False)
+        m = re.search(r"([0-9a-f]{32})", page.replace("-", ""))
+        if not m:
+            raise SystemExit("couldn't find a page id in that")
+        value = _json.dumps({"token": token, "parent": m.group(1)})
+    elif s == "hubspot":
+        print("Create a private app (Settings > Integrations > Private apps) with the scopes")
+        print("crm.objects.contacts.read and crm.objects.contacts.write.")
+        value = ask("Access token (pat-…): ")
+    else:
+        url = ask("URL to POST each meeting to (https://…): ", secret=False)
+        if not url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+            raise SystemExit("use an https:// URL (or a local http:// one)")
+        secret = getpass.getpass("Signing secret for X-Chttr-Signature (Enter for none): ").strip()
+        value = _json.dumps({"url": url, "secret": secret})
+    where = vault.store(s, value)
+    print(f"{I.label(s)} connected (secret stored in {where}).")
+    print("After each meeting the notes notification offers a \"Send to\" button; `chttr send` sends by hand.")
+    return 0
+
+
+def cmd_send_notes(args: argparse.Namespace) -> int:
+    from . import integrations as I
+    from . import library as L
+    from .meeting import resolve
+
+    cfg = C.load_config()
+    directory = resolve(args.meeting)
+    L.sync()
+    meeting = L.meeting(directory.name)
+    if not meeting:
+        print(f"{directory.name} has no notes yet", file=sys.stderr)
+        return 1
+    targets = args.to or I.connected()
+    if not targets:
+        print("nothing connected; see: chttr connect", file=sys.stderr)
+        return 1
+    s = I.summary(meeting)
+    print(f"{s['title']} ({s['when'][:16]}, {len(s['sections'])} sections, {len(s['actions'])} action items)")
+    if not args.yes:
+        try:
+            if input(f"Send to {', '.join(I.label(t) for t in targets)}? [y/N] ").strip().lower() not in ("y", "yes"):
+                return 1
+        except EOFError:
+            return 1
+    status = 0
+    for t in targets:
+        try:
+            print(f"  {I.label(t)}: {I.send(t, meeting, hubspot_tasks=cfg.integrations.hubspot_tasks)}")
+        except I.SendError as exc:
+            print(f"  {I.label(t)}: FAILED: {exc}", file=sys.stderr)
+            status = 1
+    return status
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
@@ -337,6 +427,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"hotkeys:     {hk_desc.get(hk, hk)}")
     if hk == "none":
         ok = False
+    from . import integrations as I
+    from . import vault
+
+    linked = I.connected()
+    where = "keyring" if vault.keyring_available() else "secrets.json (no secret-tool)"
+    print(f"send notes:  {', '.join(I.label(d) for d in linked) + f' ({cfg.integrations.send}; secrets in {where})' if linked else 'nothing connected (chttr connect)'}")
     from .gcal import read_urls
     from .native_host import BROWSER_DIRS, HOST_NAME
 
@@ -441,9 +537,50 @@ def cmd_meeting_process(args: argparse.Namespace) -> int:
                            check=False)
         return 1
     print(md)
+    offer = _after_meeting(directory, cfg)
     if args.notify:
-        notify_done(md, summary_line(md, directory))
+        notify_done(md, summary_line(md, directory), offer, on_send=lambda d: _send_and_tell(d, directory, cfg))
     return 0
+
+
+def _after_meeting(directory: Path, cfg) -> list[str]:
+    """Run the on_meeting_done hook and automatic sends; return the destinations to offer."""
+    from . import integrations as I
+    from . import library as L
+
+    try:
+        L.sync()
+        meeting = L.meeting(directory.name)
+    except Exception:
+        logging.exception("library update failed")
+        return []
+    if not meeting:
+        return []
+    I.run_hook(cfg.integrations.on_meeting_done, meeting)
+    auto = I.auto_destinations(cfg, meeting["title"])
+    for d in auto:
+        _send_and_tell(d, directory, cfg, meeting)
+    return [d for d in I.connected() if d not in auto] if cfg.integrations.send in ("ask", "always") else []
+
+
+def _send_and_tell(destination: str, directory: Path, cfg, meeting: dict | None = None) -> str:
+    import subprocess
+
+    from . import integrations as I
+    from . import library as L
+
+    meeting = meeting or L.meeting(directory.name) or {}
+    try:
+        result = I.send(destination, meeting, hubspot_tasks=cfg.integrations.hubspot_tasks)
+        logging.info("%s: %s", destination, result)
+        subprocess.run(["notify-send", "-a", "chttr", "-t", "4000", f"Meeting notes {result}", meeting.get("title", "")],
+                       check=False)
+        return result
+    except I.SendError as exc:
+        logging.warning("%s: %s", destination, exc)
+        subprocess.run(["notify-send", "-a", "chttr", "-u", "critical", f"Couldn't send to {I.label(destination)}",
+                        str(exc)[:300]], check=False)
+        return f"failed: {exc}"
 
 
 def cmd_meeting_list(args: argparse.Namespace) -> int:
@@ -756,6 +893,18 @@ def build_parser() -> argparse.ArgumentParser:
     ak.add_argument("question", nargs="+")
     ak.add_argument("-v", "--verbose", action="store_true", help="show the searches Claude runs")
     ak.set_defaults(func=cmd_ask)
+
+    cn = sub.add_parser("connect", help="connect Slack, Notion, HubSpot or a webhook for meeting notes (no args: list)")
+    cn.add_argument("service", nargs="?", choices=["slack", "notion", "hubspot", "webhook"])
+    cn.add_argument("--remove", action="store_true", help="disconnect it")
+    cn.set_defaults(func=cmd_connect)
+
+    sd = sub.add_parser("send", help="send a meeting's notes to your connected destinations")
+    sd.add_argument("meeting", nargs="?", help="meeting id (default: the latest)")
+    sd.add_argument("--to", action="append", choices=["slack", "notion", "hubspot", "webhook"],
+                    help="only this destination (repeatable)")
+    sd.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    sd.set_defaults(func=cmd_send_notes)
 
     mc = sub.add_parser("mcp", help="serve your meetings to Claude Code / Claude Desktop (MCP, stdio)")
     mc.set_defaults(func=cmd_mcp)
