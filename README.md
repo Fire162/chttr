@@ -13,7 +13,7 @@ meeting notes, with names next to every line.
 Speech recognition runs on your machine. Claude (optional) tidies dictation
 and writes meeting summaries.
 
-> **Early release (0.6).** Built and used daily on an Omarchy 4 laptop. The
+> **Early release (0.7).** Built and used daily on an Omarchy 4 laptop. The
 > logic is covered by a test suite that runs in CI on every change; the Google
 > Meet extension has been used in few real calls so far. Issues and fixes
 > welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -56,7 +56,8 @@ and writes meeting summaries.
 - **Personal dictionary and snippets**: names that stick forever, and phrases
   like "insert my email" that expand to saved text. `chttr fix` learns from the
   last dictation.
-- **Meeting transcripts**: records your mic and the other side as separate
+- **Meeting transcripts** for Google Meet, Zoom, Teams, Slack and any other call
+  app, with no bot in the call: records your mic and the other side as separate
   channels, splits the other side into voices, and names them from Google
   Meet's captions, your Google Calendar and voices it has heard before. Writes
   Markdown notes in the style you choose (general, BANT, MEDDPICC, 1:1,
@@ -189,9 +190,15 @@ chttr meeting calendar 'https://calendar.google.com/calendar/ical/…/basic.ics'
 ```
 
 Setup registers the Meet extension; restart Chromium once to load it. Then
-join a Google Meet call and a notification asks whether to record it
-(`[meeting] auto = "ask"`; `"always"` or `"never"` also work). Or press
-**Super+Alt+Insert** (`chttr meeting toggle`) to record anything, any app.
+join a call and a notification asks whether to record it (`[meeting] auto =
+"ask"`; `"always"` or `"never"` also work):
+
+- **Google Meet**, through the extension, which also tells chttr who is speaking.
+- **Zoom, Microsoft Teams, Slack, Discord, Webex, Signal** and other call apps,
+  and calls in any browser tab: chttr notices which app holds your microphone
+  (PipeWire) and offers to record after a few seconds; it stops when the app
+  lets go of the mic. No bot joins the call (`[meeting] detect_calls`).
+- Anything else: press **Super+Alt+Insert** (`chttr meeting toggle`).
 When the call ends, the notes appear in `~/Documents/Meetings/` as
 `2026-10-11 1400 Weekly sync.md`: frontmatter with the attendees, summary,
 decisions, action items, open questions, the transcript with timestamps, and
@@ -210,10 +217,12 @@ How it works:
   voices. The models (~29 MB) download to `~/.local/share/chttr/models` on
   first use. Parakeet transcribes every utterance.
 - **Names**, in order of trust:
-  1. The **Meet extension** turns on Meet's captions (and hides them if you
-     hadn't turned them on yourself) and reports whose name the captions show
-     while each voice is talking. The extension also reports the Meet code,
-     your Meet mute button, and when you leave.
+  1. The **Meet extension**, while chttr is recording the call, turns on Meet's
+     captions (hidden again if you hadn't turned them on yourself, and turned
+     off when the recording ends) and reports whose name the captions show
+     while each voice is talking. A red "chttr is recording" badge stays on the
+     page meanwhile. The extension also reports the Meet code, your Meet mute
+     button, and when you leave.
   2. **Remembered voices** (`~/.local/share/chttr/voices.json`): every voice
      named by captions, the calendar or you is saved under their email and
      recognised in later meetings, even without captions.
@@ -221,14 +230,20 @@ How it works:
   4. **Claude** reads the conversation ("thanks, Sarah") against the invite list.
   5. Anything left is `Speaker N`. `chttr meeting rename "Speaker 2" "Sarah Chen" --email sarah@…`
      fixes the notes and teaches chttr the voice.
+- **People in the room.** Your microphone's side is split into voices too: the
+  one that matches your remembered voice (or talks most) is you, and anyone else
+  with real speaking time becomes `In the room 1`, ... (rename them the same
+  way). Zoom and Teams desktop calls get names from remembered voices, the
+  calendar and Claude, since there are no captions to read
+  (`[meeting] room_speakers`).
 - **Calendar.** Google Calendar > Settings > your calendar > Integrate calendar >
   *Secret address in iCal format*. No OAuth app to set up; the URL is stored in
   `~/.config/chttr/calendar-urls` (mode 600). The event is found by Meet code,
   else by time; attendees' names and emails go into the notes and help match
   caption names to people.
 - **Processing** runs after the call in a separate, niced process
-  (`chttr meeting process`), roughly 5 to 10 minutes per hour of meeting on
-  this laptop. A notification with an Open button appears when the notes are
+  (`chttr meeting process`): recognition runs at about 7% of real time, so an
+  hour of meeting takes 5 to 10 minutes in all. A notification with an Open button appears when the notes are
   written. Audio is deleted afterwards unless `keep_audio = true` (then it's
   kept as stereo Opus next to the notes: you left, them right).
 

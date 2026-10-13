@@ -5,6 +5,30 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-13
+
+Meetings beyond Google Meet.
+
+### Added
+- Call detection without a bot (`calls.py`, `[meeting] detect_calls`): chttr
+  watches which programs hold the microphone (PipeWire) and offers to record
+  calls in Zoom, Microsoft Teams, Slack, Discord, Webex, Signal, Telegram,
+  Element, WhatsApp, Mumble and browser tabs that aren't Google Meet. The
+  recording stops when the app lets go of the mic; the title comes from the
+  calendar event happening now.
+- People in the room (`[meeting] room_speakers`): the microphone channel is
+  split into voices as well. Your voice (remembered after each meeting, so the
+  right voice is you even when someone else talks more) stays yours; other
+  voices with real speaking time become `In the room 1`, ... and can be named
+  with `chttr meeting rename` like any speaker.
+
+### Changed
+- The Meet extension only turns on captions while chttr is recording the call,
+  turns them off again when the recording ends, and shows a "chttr is
+  recording" badge on the page meanwhile. Before, captions were switched on and
+  hidden in every call. It also reports every 3 seconds instead of 10, so a
+  recording you start from the notification picks up speaker names sooner.
+
 ## [0.6.0] - 2026-10-13
 
 Wispr Flow parity for dictation.
@@ -156,7 +180,8 @@ personal dictionary with sound-alike name correction, snippets, history and
 stats, and Google Meet transcripts with speaker names and 18 note styles, as an
 Omarchy plugin.
 
-[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/robjobbed/chttr/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/robjobbed/chttr/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/robjobbed/chttr/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/robjobbed/chttr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/robjobbed/chttr/compare/v0.3.0...v0.4.0

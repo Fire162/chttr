@@ -18,6 +18,8 @@ function connect() {
     if (reply && typeof reply.tab === "number" && typeof reply.recording === "boolean") {
       chrome.action.setBadgeText({ tabId: reply.tab, text: reply.recording ? "REC" : "" });
       chrome.action.setBadgeBackgroundColor({ tabId: reply.tab, color: "#c62828" });
+      // the page only reads captions (and shows its badge) while chttr records the call
+      chrome.tabs.sendMessage(reply.tab, { type: "chttr-state", recording: reply.recording }).catch(() => {});
     }
   });
   port.onDisconnect.addListener(() => {

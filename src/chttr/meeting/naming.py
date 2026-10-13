@@ -12,22 +12,59 @@ from .. import diarize as D
 from .analysis import SELF_CAPTION_NAMES, _caption_votes, _match_attendee, _norm
 from .store import Speaker, Utterance
 
+ROOM_OFFSET = 1000          # mic-channel cluster ids are stored as 1000 + n, apart from the them channel's
+ROOM_MIN_SECONDS = 20.0
+ROOM_MIN_SHARE = 0.15
+
+
+def room_clusters(mine: list[Utterance], mic_centroids: dict[int, np.ndarray],
+                  own_voice: np.ndarray | None) -> tuple[int | None, dict[int, str]]:
+    """Which mic-channel voice is you, and which are other people in the room.
+    You: the voice that matches the one remembered for you, else the one that talks
+    most. Someone else only counts with real speaking time (ROOM_MIN_SECONDS and
+    ROOM_MIN_SHARE of the mic's speech); anything smaller is folded into you."""
+    seconds: dict[int, float] = defaultdict(float)
+    first: dict[int, float] = {}
+    for u in mine:
+        seconds[u.cluster] += u.end - u.start
+        first.setdefault(u.cluster, u.start)
+    if not mic_centroids or not seconds:
+        return None, {}
+    if len(seconds) == 1:
+        return next(iter(seconds)), {}
+    if own_voice is not None:
+        me = max(mic_centroids, key=lambda c: float(mic_centroids[c] @ own_voice))
+    else:
+        me = max(seconds, key=lambda c: seconds[c])
+    total = sum(seconds.values()) or 1.0
+    others = [c for c in seconds if c != me and seconds[c] >= ROOM_MIN_SECONDS and seconds[c] / total >= ROOM_MIN_SHARE]
+    return me, {c: f"In the room {n}" for n, c in enumerate(sorted(others, key=lambda c: first[c]), 1)}
+
 
 def assign_speakers(mine: list[Utterance], them: list[Utterance], events: list[dict], started: float,
                     attendees: list[dict], me_setting: str, centroids: dict[int, np.ndarray],
-                    voices: dict[str, D.Voice]) -> tuple[dict[str, Speaker], str, dict[int, float]]:
+                    voices: dict[str, D.Voice], room: dict[int, str] | None = None
+                    ) -> tuple[dict[str, Speaker], str, dict[int, float]]:
     """Label every utterance (sets .speaker) and return (speakers by label, your name,
-    seconds per them-cluster)."""
+    seconds per them-cluster). `room` maps mic-channel clusters to labels for other
+    people in the room; every other mic utterance is you."""
     me_att = next((a for a in attendees if a["is_me"]), None)
     me_name = me_setting or (me_att["name"] if me_att and me_att["name"] else "") or "Me"
     others = [a for a in attendees if not a["is_me"]]
     invited = {a["email"] for a in others}
 
     speakers: dict[str, Speaker] = {}
+    room = room or {}
     if mine:
         speakers[me_name] = Speaker(me_name, me_name, me_att["email"] if me_att else "", "me")
         for u in mine:
-            u.speaker = me_name
+            label = room.get(u.cluster)
+            if label:
+                if label not in speakers:
+                    speakers[label] = Speaker(label, label, "", "unknown", clusters=[ROOM_OFFSET + u.cluster])
+                u.speaker = label
+            else:
+                u.speaker = me_name
 
     self_names = SELF_CAPTION_NAMES | {_norm(me_name)} | ({_norm(me_att["name"])} if me_att and me_att["name"] else set())
     per_cluster, per_utt = _caption_votes(them, events, started, self_names)
