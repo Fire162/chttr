@@ -53,7 +53,9 @@ def pick(entries: list[dict], limit: int = 50) -> str | None:
         text = " ".join(str(e.get("text") or e.get("raw")).split())
         label = text if len(text) <= 90 else text[:89] + "…"
         sub = " · ".join(x for x in (f"#{i + 1}", _ago(_local(e.get("ts", ""))), e.get("app", "")) if x)
-        options.append(f"{label}\t{sub}")
+        # Omarchy's picker reads "<icon>\t<label>\t<subtext>"; without the icon column it
+        # would draw the whole dictation in the icon slot, over the label.
+        options.append(f"{'󰆓' if e.get('output') == 'clipboard' else '󰌌'}\t{label}\t{sub}")
     try:
         choice = DT.menu("Dictation history", options)
     except FileNotFoundError as exc:

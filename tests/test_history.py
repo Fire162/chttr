@@ -26,3 +26,20 @@ def test_stats_counts_words_speed_and_apps(tmp_path, monkeypatch):
 
 def test_stats_with_no_history():
     assert history.stats([]) == "no dictations in history yet"
+
+
+def test_pick_gives_the_menu_an_icon_label_and_subtext(monkeypatch):
+    from chttr import desktop
+
+    shown = []
+
+    def fake_menu(title, options):
+        shown.extend(options)
+        return desktop.match_option("\t".join(options[1].split("\t")[1:]), options)   # Omarchy drops the icon
+
+    monkeypatch.setattr(desktop, "menu", fake_menu)
+    entries = [{"ts": "2026-10-13T13:52:00+00:00", "app": "foot", "text": "first one", "output": "type"},
+               {"ts": "2026-10-13T13:53:00+00:00", "app": "chromium", "text": "second one", "output": "type"}]
+    assert history.pick(entries) == "first one"
+    icon, label, sub = shown[0].split("\t")
+    assert icon and label == "second one" and sub.startswith("#1 · ") and sub.endswith("chromium")
